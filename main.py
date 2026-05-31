@@ -4,18 +4,32 @@ import requests
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-mensaje = """
-⚾ MLB Analyst Bot
+# Juegos MLB del día
+url_mlb = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
-✅ Conexión exitosa
+respuesta = requests.get(url_mlb).json()
 
-El bot está funcionando correctamente en Railway.
-"""
+mensaje = "⚾ MLB HOY\n\n"
 
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+fechas = respuesta.get("dates", [])
+
+if fechas:
+    juegos = fechas[0].get("games", [])
+
+    for juego in juegos:
+        visitante = juego["teams"]["away"]["team"]["name"]
+        local = juego["teams"]["home"]["team"]["name"]
+
+        mensaje += f"{visitante} vs {local}\n"
+
+else:
+    mensaje += "No se encontraron juegos."
+
+# Enviar a Telegram
+url_telegram = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
 requests.post(
-    url,
+    url_telegram,
     json={
         "chat_id": CHAT_ID,
         "text": mensaje
