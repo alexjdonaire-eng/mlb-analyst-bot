@@ -27,42 +27,6 @@ def get_pitcher_stats(player_id):
 
 
 # -----------------------------
-# TEAM OFFENSE + FORM
-# -----------------------------
-def get_team_data():
-    try:
-        url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
-        data = requests.get(url, timeout=10).json()
-
-        teams = {}
-
-        for record in data.get("records", []):
-            for t in record.get("teamRecords", []):
-                name = t["team"]["name"]
-
-                runs = float(t.get("runsScored", 0))
-                games = float(t.get("gamesPlayed", 1))
-
-                # ofensiva base
-                rpg = runs / games
-
-                # forma (proxy: record últimos juegos simplificado)
-                w = float(t.get("wins", 0))
-                l = float(t.get("losses", 0))
-                form = (w - l) / max((w + l), 1)
-
-                teams[name] = {
-                    "rpg": rpg,
-                    "form": form
-                }
-
-        return teams
-
-    except:
-        return {}
-
-
-# -----------------------------
 # PITCHERS
 # -----------------------------
 def get_probable_pitchers(game_pk):
@@ -88,16 +52,8 @@ def get_probable_pitchers(game_pk):
             home_era, home_whip = get_pitcher_stats(home_id)
 
         return {
-            "away": {
-                "name": away.get("fullName"),
-                "era": away_era,
-                "whip": away_whip
-            },
-            "home": {
-                "name": home.get("fullName"),
-                "era": home_era,
-                "whip": home_whip
-            }
+            "away": {"name": away.get("fullName"), "era": away_era, "whip": away_whip},
+            "home": {"name": home.get("fullName"), "era": home_era, "whip": home_whip}
         }
 
     except:
@@ -105,87 +61,57 @@ def get_probable_pitchers(game_pk):
 
 
 # -----------------------------
-# MODELO CUANTITATIVO
+# MODELO CUANTITATIVO BASE
 # -----------------------------
-def get_probability(away, home, teams):
-    try:
-        away_score = 50
-        home_score = 50
+def model_probability(away, home):
+    away_score = 50
+    home_score = 50
 
-        if not away or not home:
-            return None, None
-
-        # ---------------- ERA ----------------
-        if away["era"] and home["era"]:
-            diff = float(home["era"]) - float(away["era"])
-            away_score += diff * 9
-            home_score -= diff * 9
-
-        # ---------------- WHIP ----------------
-        if away["whip"] and home["whip"]:
-            diff = float(home["whip"]) - float(away["whip"])
-            away_score += diff * 6
-            home_score -= diff * 6
-
-        # ---------------- OFFENSE + FORM ----------------
-        away_team = teams.get(away.get("team"))
-        home_team = teams.get(home.get("team"))
-
-        if away_team and home_team:
-
-            # ofensiva
-            diff_rpg = away_team["rpg"] - home_team["rpg"]
-            away_score += diff_rpg * 7
-            home_score -= diff_rpg * 7
-
-            # forma reciente (proxy bullpen + momentum)
-            diff_form = away_team["form"] - home_team["form"]
-            away_score += diff_form * 5
-            home_score -= diff_form * 5
-
-        total = away_score + home_score
-
-        return (
-            round((away_score / total) * 100, 1),
-            round((home_score / total) * 100, 1)
-        )
-
-    except:
+    if not away or not home:
         return None, None
 
+    # ERA
+    if away["era"] and home["era"]:
+        diff = float(home["era"]) - float(away["era"])
+        away_score += diff * 9
+        home_score -= diff * 9
+
+    # WHIP
+    if away["whip"] and home["whip"]:
+        diff = float(home["whip"]) - float(away["whip"])
+        away_score += diff * 6
+        home_score -= diff * 6
+
+    total = away_score + home_score
+
+    return (
+        (away_score / total) * 100,
+        (home_score / total) * 100
+    )
+
 
 # -----------------------------
-# CONFIDENCIA PRO
+# EDGE HEDGE FUND
 # -----------------------------
-def get_confidence(diff):
+def classify_play(away_pct, home_pct):
+    diff = abs(away_pct - home_pct)
+
+    if diff < 8:
+        return "NO BET", 0, diff
+
     if diff >= 15:
-        return "🔥 ALTA (PRO)"
-    elif diff >= 9:
-        return "🟡 MEDIA"
-    return "⚖️ BAJA"
-
-
-# -----------------------------
-# STAKE AVANZADO
-# -----------------------------
-def get_stake(diff):
-    if diff >= 15:
-        return "💰 3u (Fuerte Value)"
-    elif diff >= 12:
-        return "💰 2u (Value medio)"
-    elif diff >= 9:
-        return "💰 1u (ligero value)"
-    return None
+        return "🟢 STRONG PLAY", 3, diff
+    elif diff >= 11:
+        return "🟡 LEAN", 2, diff
+    else:
+        return "🟡 LEAN", 1, diff
 
 
 # -----------------------------
 # PICK
 # -----------------------------
-def get_pick(away_pct, home_pct, diff):
-    if diff < 9:
-        return None
-
-    return "📌 PICK: Visitante" if away_pct > home_pct else "📌 PICK: Local"
+def get_pick(away_pct, home_pct):
+    return "Visitante" if away_pct > home_pct else "Local"
 
 
 # -----------------------------
@@ -194,7 +120,7 @@ def get_pick(away_pct, home_pct, diff):
 def format_pitcher(p):
     if not p or not p.get("name"):
         return "TBD"
-    return f"{p['name']} | ERA: {p['era'] or 'N/A'} | WHIP: {p['whip'] or 'N/A'}"
+    return f"{p['name']} | ERA {p['era'] or 'N/A'} | WHIP {p['whip'] or 'N/A'}"
 
 
 # -----------------------------
@@ -202,16 +128,10 @@ def format_pitcher(p):
 # -----------------------------
 def main():
     data = requests.get(SCHEDULE_URL, timeout=10).json()
-    teams = get_team_data()
 
     dates = data.get("dates", [])
 
     if not dates:
-        msg = "⚾ No hay juegos hoy."
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg}
-        )
         return
 
     for game in dates[0].get("games", []):
@@ -226,27 +146,20 @@ def main():
         away = pitchers["away"] if pitchers else None
         home = pitchers["home"] if pitchers else None
 
-        if away:
-            away["team"] = away_team
-        if home:
-            home["team"] = home_team
+        away_pct, home_pct = model_probability(away, home)
 
-        away_pct, home_pct = get_probability(away, home, teams)
-
-        if away_pct is None or home_pct is None:
+        if not away_pct:
             continue
 
-        diff = abs(away_pct - home_pct)
+        label, stake, diff = classify_play(away_pct, home_pct)
 
-        pick = get_pick(away_pct, home_pct, diff)
-
-        if not pick:
+        # FILTRO HEDGE FUND (solo valor real)
+        if label == "NO BET":
             continue
 
-        conf = get_confidence(diff)
-        stake = get_stake(diff)
+        pick_side = get_pick(away_pct, home_pct)
 
-        msg = f"""⚾ MLB QUANT MODEL ⚾
+        msg = f"""🏦 MLB HEDGE FUND MODEL 🏦
 
 {away_team} vs {home_team}
 
@@ -254,12 +167,12 @@ Pitcher Visitante: {format_pitcher(away)}
 Pitcher Local: {format_pitcher(home)}
 
 📊 Probabilidad:
-Visitante: {away_pct}%
-Local: {home_pct}%
+Visitante: {round(away_pct,1)}%
+Local: {round(home_pct,1)}%
 
-{conf}
-{pick}
-{stake if stake else ""}
+📈 Clasificación: {label}
+📌 Pick: {pick_side}
+💰 Stake: {stake}u
 
 ──────────────────
 """
@@ -270,7 +183,7 @@ Local: {home_pct}%
             timeout=10
         )
 
-        print(f"Sent: {away_team} vs {home_team}")
+        print(f"Sent {away_team} vs {home_team}")
 
 
 if __name__ == "__main__":
