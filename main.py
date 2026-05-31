@@ -27,6 +27,42 @@ def get_pitcher_stats(player_id):
 
 
 # -----------------------------
+# TEAM OFFENSE + FORM
+# -----------------------------
+def get_team_data():
+    try:
+        url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
+        data = requests.get(url, timeout=10).json()
+
+        teams = {}
+
+        for record in data.get("records", []):
+            for t in record.get("teamRecords", []):
+                name = t["team"]["name"]
+
+                runs = float(t.get("runsScored", 0))
+                games = float(t.get("gamesPlayed", 1))
+
+                # ofensiva base
+                rpg = runs / games
+
+                # forma (proxy: record últimos juegos simplificado)
+                w = float(t.get("wins", 0))
+                l = float(t.get("losses", 0))
+                form = (w - l) / max((w + l), 1)
+
+                teams[name] = {
+                    "rpg": rpg,
+                    "form": form
+                }
+
+        return teams
+
+    except:
+        return {}
+
+
+# -----------------------------
 # PITCHERS
 # -----------------------------
 def get_probable_pitchers(game_pk):
@@ -69,32 +105,9 @@ def get_probable_pitchers(game_pk):
 
 
 # -----------------------------
-# OFENSIVA
+# MODELO CUANTITATIVO
 # -----------------------------
-def get_team_offense():
-    try:
-        url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
-        data = requests.get(url, timeout=10).json()
-
-        offense = {}
-
-        for record in data.get("records", []):
-            for team in record.get("teamRecords", []):
-                name = team["team"]["name"]
-                runs = float(team.get("runsScored", 0))
-                games = float(team.get("gamesPlayed", 1))
-                offense[name] = runs / games
-
-        return offense
-
-    except:
-        return {}
-
-
-# -----------------------------
-# MODELO PRO (MEJOR BALANCEADO)
-# -----------------------------
-def get_win_probability(away, home, offense):
+def get_probability(away, home, teams):
     try:
         away_score = 50
         home_score = 50
@@ -102,59 +115,66 @@ def get_win_probability(away, home, offense):
         if not away or not home:
             return None, None
 
-        # ERA (peso alto)
+        # ---------------- ERA ----------------
         if away["era"] and home["era"]:
             diff = float(home["era"]) - float(away["era"])
-            away_score += diff * 8
-            home_score -= diff * 8
+            away_score += diff * 9
+            home_score -= diff * 9
 
-        # WHIP (peso medio)
+        # ---------------- WHIP ----------------
         if away["whip"] and home["whip"]:
             diff = float(home["whip"]) - float(away["whip"])
-            away_score += diff * 5
-            home_score -= diff * 5
-
-        # OFENSIVA
-        away_rpg = offense.get(away.get("team"))
-        home_rpg = offense.get(home.get("team"))
-
-        if away_rpg and home_rpg:
-            diff = away_rpg - home_rpg
             away_score += diff * 6
             home_score -= diff * 6
 
+        # ---------------- OFFENSE + FORM ----------------
+        away_team = teams.get(away.get("team"))
+        home_team = teams.get(home.get("team"))
+
+        if away_team and home_team:
+
+            # ofensiva
+            diff_rpg = away_team["rpg"] - home_team["rpg"]
+            away_score += diff_rpg * 7
+            home_score -= diff_rpg * 7
+
+            # forma reciente (proxy bullpen + momentum)
+            diff_form = away_team["form"] - home_team["form"]
+            away_score += diff_form * 5
+            home_score -= diff_form * 5
+
         total = away_score + home_score
 
-        away_pct = (away_score / total) * 100
-        home_pct = (home_score / total) * 100
-
-        return round(away_pct, 1), round(home_pct, 1)
+        return (
+            round((away_score / total) * 100, 1),
+            round((home_score / total) * 100, 1)
+        )
 
     except:
         return None, None
 
 
 # -----------------------------
-# CONFIANZA PRO
+# CONFIDENCIA PRO
 # -----------------------------
 def get_confidence(diff):
     if diff >= 15:
-        return "🔥 ALTA CONFIANZA"
-    elif diff >= 8:
-        return "🟡 MEDIA CONFIANZA"
-    return "⚖️ BAJA CONFIANZA"
+        return "🔥 ALTA (PRO)"
+    elif diff >= 9:
+        return "🟡 MEDIA"
+    return "⚖️ BAJA"
 
 
 # -----------------------------
-# STAKE (UNIDADES)
+# STAKE AVANZADO
 # -----------------------------
 def get_stake(diff):
     if diff >= 15:
-        return "💰 Stake: 3u (Fuerte)"
-    elif diff >= 10:
-        return "💰 Stake: 2u (Media)"
-    elif diff >= 8:
-        return "💰 Stake: 1u (Baja)"
+        return "💰 3u (Fuerte Value)"
+    elif diff >= 12:
+        return "💰 2u (Value medio)"
+    elif diff >= 9:
+        return "💰 1u (ligero value)"
     return None
 
 
@@ -162,24 +182,18 @@ def get_stake(diff):
 # PICK
 # -----------------------------
 def get_pick(away_pct, home_pct, diff):
-    if diff < 8:
+    if diff < 9:
         return None
 
-    if away_pct > home_pct:
-        team = "Visitante"
-    else:
-        team = "Local"
-
-    return f"📌 PICK: {team}"
+    return "📌 PICK: Visitante" if away_pct > home_pct else "📌 PICK: Local"
 
 
 # -----------------------------
-# FORMATO
+# FORMAT
 # -----------------------------
 def format_pitcher(p):
     if not p or not p.get("name"):
         return "TBD"
-
     return f"{p['name']} | ERA: {p['era'] or 'N/A'} | WHIP: {p['whip'] or 'N/A'}"
 
 
@@ -188,7 +202,7 @@ def format_pitcher(p):
 # -----------------------------
 def main():
     data = requests.get(SCHEDULE_URL, timeout=10).json()
-    offense = get_team_offense()
+    teams = get_team_data()
 
     dates = data.get("dates", [])
 
@@ -196,7 +210,7 @@ def main():
         msg = "⚾ No hay juegos hoy."
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg},
+            json={"chat_id": CHAT_ID, "text": msg}
         )
         return
 
@@ -217,23 +231,22 @@ def main():
         if home:
             home["team"] = home_team
 
-        away_pct, home_pct = get_win_probability(away, home, offense)
+        away_pct, home_pct = get_probability(away, home, teams)
 
         if away_pct is None or home_pct is None:
             continue
 
         diff = abs(away_pct - home_pct)
 
-        # 🔥 FILTRO PRO (solo value bets)
         pick = get_pick(away_pct, home_pct, diff)
 
         if not pick:
             continue
 
-        confidence = get_confidence(diff)
+        conf = get_confidence(diff)
         stake = get_stake(diff)
 
-        msg = f"""⚾ MLB PRO ANALYST ⚾
+        msg = f"""⚾ MLB QUANT MODEL ⚾
 
 {away_team} vs {home_team}
 
@@ -244,7 +257,7 @@ Pitcher Local: {format_pitcher(home)}
 Visitante: {away_pct}%
 Local: {home_pct}%
 
-{confidence}
+{conf}
 {pick}
 {stake if stake else ""}
 
