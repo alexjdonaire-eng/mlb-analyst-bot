@@ -4,50 +4,80 @@ import requests
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Obtener juegos MLB del día
-url_mlb = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+# Endpoint principal (juegos del día)
+SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
-respuesta = requests.get(url_mlb).json()
+def get_probable_pitchers(game_pk):
+    """
+    Obtiene pitchers desde el feed live (más confiable que schedule)
+    """
+    try:
+        url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+        data = requests.get(url, timeout=10).json()
 
-mensaje = "⚾ MLB HOY ⚾\n\n"
+        pitchers = data.get("gameData", {}).get("probablePitchers", {})
 
-fechas = respuesta.get("dates", [])
+        away = pitchers.get("away", {})
+        home = pitchers.get("home", {})
 
-if fechas:
-    juegos = fechas[0].get("games", [])
+        away_name = away.get("fullName")
+        home_name = home.get("fullName")
 
-    for juego in juegos:
-        visitante = juego["teams"]["away"]["team"]["name"]
-        local = juego["teams"]["home"]["team"]["name"]
+        return away_name, home_name
 
-        mensaje += f"⚾ {visitante} vs {local}\n"
+    except Exception:
+        return None, None
 
-        away_pitcher = juego["teams"]["away"].get("probablePitcher")
-        home_pitcher = juego["teams"]["home"].get("probablePitcher")
 
-        if away_pitcher:
-            mensaje += f"Pitcher Visitante: {away_pitcher['fullName']}\n"
-        else:
-            mensaje += "Pitcher Visitante: Por confirmar\n"
+def format_pitcher(name):
+    """
+    Mejora presentación del dato faltante
+    """
+    if name:
+        return name
+    return "TBD (no confirmado)"
 
-        if home_pitcher:
-            mensaje += f"Pitcher Local: {home_pitcher['fullName']}\n"
-        else:
-            mensaje += "Pitcher Local: Por confirmar\n"
 
-        mensaje += "\n──────────────────\n\n"
+def main():
+    respuesta = requests.get(SCHEDULE_URL, timeout=10).json()
 
-else:
-    mensaje += "No hay juegos programados."
+    mensaje = "⚾ MLB HOY - ANALISTA BOT ⚾\n\n"
 
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    fechas = respuesta.get("dates", [])
 
-requests.post(
-    url,
-    json={
-        "chat_id": CHAT_ID,
-        "text": mensaje
-    }
-)
+    if not fechas:
+        mensaje += "No hay juegos programados."
+    else:
+        juegos = fechas[0].get("games", [])
 
-print("Mensaje enviado correctamente")
+        for juego in juegos:
+            game_pk = juego.get("gamePk")
+
+            visitante = juego["teams"]["away"]["team"]["name"]
+            local = juego["teams"]["home"]["team"]["name"]
+
+            away_pitcher, home_pitcher = get_probable_pitchers(game_pk)
+
+            mensaje += f"⚾ {visitante} vs {local}\n"
+
+            mensaje += f"Pitcher Visitante: {format_pitcher(away_pitcher)}\n"
+            mensaje += f"Pitcher Local: {format_pitcher(home_pitcher)}\n"
+
+            mensaje += "\n──────────────────\n\n"
+
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+
+    requests.post(
+        url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": mensaje
+        },
+        timeout=10
+    )
+
+    print("Mensaje enviado correctamente")
+
+
+if __name__ == "__main__":
+    main()
