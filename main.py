@@ -92,91 +92,85 @@ def get_team_offense():
 
 
 # -----------------------------
-# PROBABILIDAD
+# MODELO PRO (MEJOR BALANCEADO)
 # -----------------------------
 def get_win_probability(away, home, offense):
     try:
         away_score = 50
         home_score = 50
 
-        if away and home:
+        if not away or not home:
+            return None, None
 
-            # ERA
-            if away["era"] and home["era"]:
-                diff = float(home["era"]) - float(away["era"])
-                if diff > 0.50:
-                    away_score += 10
-                    home_score -= 10
-                elif diff < -0.50:
-                    home_score += 10
-                    away_score -= 10
+        # ERA (peso alto)
+        if away["era"] and home["era"]:
+            diff = float(home["era"]) - float(away["era"])
+            away_score += diff * 8
+            home_score -= diff * 8
 
-            # WHIP
-            if away["whip"] and home["whip"]:
-                diff = float(home["whip"]) - float(away["whip"])
-                if diff > 0.15:
-                    away_score += 5
-                    home_score -= 5
-                elif diff < -0.15:
-                    home_score += 5
-                    away_score -= 5
+        # WHIP (peso medio)
+        if away["whip"] and home["whip"]:
+            diff = float(home["whip"]) - float(away["whip"])
+            away_score += diff * 5
+            home_score -= diff * 5
 
-            # OFENSIVA
-            away_rpg = offense.get(away.get("team"))
-            home_rpg = offense.get(home.get("team"))
+        # OFENSIVA
+        away_rpg = offense.get(away.get("team"))
+        home_rpg = offense.get(home.get("team"))
 
-            if away_rpg and home_rpg:
-                if away_rpg > home_rpg:
-                    away_score += 8
-                    home_score -= 8
-                elif home_rpg > away_rpg:
-                    home_score += 8
-                    away_score -= 8
+        if away_rpg and home_rpg:
+            diff = away_rpg - home_rpg
+            away_score += diff * 6
+            home_score -= diff * 6
 
         total = away_score + home_score
 
-        return (
-            round((away_score / total) * 100, 1),
-            round((home_score / total) * 100, 1)
-        )
+        away_pct = (away_score / total) * 100
+        home_pct = (home_score / total) * 100
+
+        return round(away_pct, 1), round(home_pct, 1)
 
     except:
         return None, None
 
 
 # -----------------------------
-# CONFIANZA
+# CONFIANZA PRO
 # -----------------------------
 def get_confidence(diff):
-    if diff >= 12:
-        return "🔥 Alta confianza"
-    elif diff >= 6:
-        return "🟡 Media confianza"
-    return "⚖️ Baja confianza"
+    if diff >= 15:
+        return "🔥 ALTA CONFIANZA"
+    elif diff >= 8:
+        return "🟡 MEDIA CONFIANZA"
+    return "⚖️ BAJA CONFIANZA"
 
 
 # -----------------------------
-# PICK AUTOMÁTICO
+# STAKE (UNIDADES)
 # -----------------------------
-def get_pick(away_pct, home_pct):
-    diff = abs(away_pct - home_pct)
+def get_stake(diff):
+    if diff >= 15:
+        return "💰 Stake: 3u (Fuerte)"
+    elif diff >= 10:
+        return "💰 Stake: 2u (Media)"
+    elif diff >= 8:
+        return "💰 Stake: 1u (Baja)"
+    return None
 
-    if diff < 5:
-        return "❌ NO BET (muy parejo)"
+
+# -----------------------------
+# PICK
+# -----------------------------
+def get_pick(away_pct, home_pct, diff):
+    if diff < 8:
+        return None
 
     if away_pct > home_pct:
-        pick = "📌 PICK: Visitante"
+        team = "Visitante"
     else:
-        pick = "📌 PICK: Local"
+        team = "Local"
 
-    if diff >= 12:
-        level = "🔥 Fuerte"
-    elif diff >= 6:
-        level = "🟡 Medio"
-    else:
-        level = "⚖️ Débil"
-
-    return f"{pick} ({level})"
+    return f"📌 PICK: {team}"
 
 
 # -----------------------------
@@ -190,7 +184,7 @@ def format_pitcher(p):
 
 
 # -----------------------------
-# MAIN (MENSAJE POR JUEGO)
+# MAIN
 # -----------------------------
 def main():
     data = requests.get(SCHEDULE_URL, timeout=10).json()
@@ -202,13 +196,11 @@ def main():
         msg = "⚾ No hay juegos hoy."
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg}
+            json={"chat_id": CHAT_ID, "text": msg},
         )
         return
 
     for game in dates[0].get("games", []):
-
-        msg = "⚾ MLB ANALYST BOT ⚾\n\n"
 
         game_pk = game.get("gamePk")
 
@@ -232,19 +224,32 @@ def main():
 
         diff = abs(away_pct - home_pct)
 
+        # 🔥 FILTRO PRO (solo value bets)
+        pick = get_pick(away_pct, home_pct, diff)
+
+        if not pick:
+            continue
+
         confidence = get_confidence(diff)
-        pick = get_pick(away_pct, home_pct)
+        stake = get_stake(diff)
 
-        msg += f"⚾ {away_team} vs {home_team}\n\n"
-        msg += f"Pitcher Visitante: {format_pitcher(away)}\n"
-        msg += f"Pitcher Local: {format_pitcher(home)}\n\n"
+        msg = f"""⚾ MLB PRO ANALYST ⚾
 
-        msg += f"📊 Probabilidad:\n"
-        msg += f"Visitante: {away_pct}%\n"
-        msg += f"Local: {home_pct}%\n\n"
+{away_team} vs {home_team}
 
-        msg += f"🎯 {confidence}\n"
-        msg += f"{pick}\n"
+Pitcher Visitante: {format_pitcher(away)}
+Pitcher Local: {format_pitcher(home)}
+
+📊 Probabilidad:
+Visitante: {away_pct}%
+Local: {home_pct}%
+
+{confidence}
+{pick}
+{stake if stake else ""}
+
+──────────────────
+"""
 
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -252,7 +257,7 @@ def main():
             timeout=10
         )
 
-        print(f"Enviado: {away_team} vs {home_team}")
+        print(f"Sent: {away_team} vs {home_team}")
 
 
 if __name__ == "__main__":
