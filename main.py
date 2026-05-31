@@ -7,6 +7,9 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
 
+# -----------------------------
+# PITCHER STATS
+# -----------------------------
 def get_pitcher_stats(player_id):
     try:
         url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
@@ -23,6 +26,9 @@ def get_pitcher_stats(player_id):
         return None, None
 
 
+# -----------------------------
+# PITCHERS
+# -----------------------------
 def get_probable_pitchers(game_pk):
     try:
         url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
@@ -62,6 +68,9 @@ def get_probable_pitchers(game_pk):
         return None
 
 
+# -----------------------------
+# OFENSIVA
+# -----------------------------
 def get_team_offense():
     try:
         url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
@@ -82,6 +91,9 @@ def get_team_offense():
         return {}
 
 
+# -----------------------------
+# PROBABILIDAD
+# -----------------------------
 def get_win_probability(away, home, offense):
     try:
         away_score = 50
@@ -89,9 +101,9 @@ def get_win_probability(away, home, offense):
 
         if away and home:
 
+            # ERA
             if away["era"] and home["era"]:
                 diff = float(home["era"]) - float(away["era"])
-
                 if diff > 0.50:
                     away_score += 10
                     home_score -= 10
@@ -99,9 +111,9 @@ def get_win_probability(away, home, offense):
                     home_score += 10
                     away_score -= 10
 
+            # WHIP
             if away["whip"] and home["whip"]:
                 diff = float(home["whip"]) - float(away["whip"])
-
                 if diff > 0.15:
                     away_score += 5
                     home_score -= 5
@@ -109,6 +121,7 @@ def get_win_probability(away, home, offense):
                     home_score += 5
                     away_score -= 5
 
+            # OFENSIVA
             away_rpg = offense.get(away.get("team"))
             home_rpg = offense.get(home.get("team"))
 
@@ -122,12 +135,18 @@ def get_win_probability(away, home, offense):
 
         total = away_score + home_score
 
-        return round((away_score / total) * 100, 1), round((home_score / total) * 100, 1)
+        return (
+            round((away_score / total) * 100, 1),
+            round((home_score / total) * 100, 1)
+        )
 
     except:
         return None, None
 
 
+# -----------------------------
+# CONFIANZA
+# -----------------------------
 def get_confidence(diff):
     if diff >= 12:
         return "🔥 Alta confianza"
@@ -136,6 +155,33 @@ def get_confidence(diff):
     return "⚖️ Baja confianza"
 
 
+# -----------------------------
+# PICK AUTOMÁTICO
+# -----------------------------
+def get_pick(away_pct, home_pct):
+    diff = abs(away_pct - home_pct)
+
+    if diff < 5:
+        return "❌ NO BET (muy parejo)"
+
+    if away_pct > home_pct:
+        pick = "📌 PICK: Visitante"
+    else:
+        pick = "📌 PICK: Local"
+
+    if diff >= 12:
+        level = "🔥 Fuerte"
+    elif diff >= 6:
+        level = "🟡 Medio"
+    else:
+        level = "⚖️ Débil"
+
+    return f"{pick} ({level})"
+
+
+# -----------------------------
+# FORMATO
+# -----------------------------
 def format_pitcher(p):
     if not p or not p.get("name"):
         return "TBD"
@@ -143,58 +189,70 @@ def format_pitcher(p):
     return f"{p['name']} | ERA: {p['era'] or 'N/A'} | WHIP: {p['whip'] or 'N/A'}"
 
 
+# -----------------------------
+# MAIN (MENSAJE POR JUEGO)
+# -----------------------------
 def main():
     data = requests.get(SCHEDULE_URL, timeout=10).json()
     offense = get_team_offense()
 
-    msg = "⚾ MLB ANALYST BOT ⚾\n\n"
-
     dates = data.get("dates", [])
 
     if not dates:
-        msg += "No hay juegos hoy."
-    else:
-        for game in dates[0].get("games", []):
+        msg = "⚾ No hay juegos hoy."
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg}
+        )
+        return
 
-            game_pk = game.get("gamePk")
+    for game in dates[0].get("games", []):
 
-            away_team = game["teams"]["away"]["team"]["name"]
-            home_team = game["teams"]["home"]["team"]["name"]
+        msg = "⚾ MLB ANALYST BOT ⚾\n\n"
 
-            pitchers = get_probable_pitchers(game_pk)
+        game_pk = game.get("gamePk")
 
-            away = pitchers["away"] if pitchers else None
-            home = pitchers["home"] if pitchers else None
+        away_team = game["teams"]["away"]["team"]["name"]
+        home_team = game["teams"]["home"]["team"]["name"]
 
-            if away:
-                away["team"] = away_team
-            if home:
-                home["team"] = home_team
+        pitchers = get_probable_pitchers(game_pk)
 
-            away_pct, home_pct = get_win_probability(away, home, offense)
+        away = pitchers["away"] if pitchers else None
+        home = pitchers["home"] if pitchers else None
 
-            if away_pct is None or home_pct is None:
-                continue
+        if away:
+            away["team"] = away_team
+        if home:
+            home["team"] = home_team
 
-            if abs(away_pct - home_pct) < 5:
-                continue
+        away_pct, home_pct = get_win_probability(away, home, offense)
 
-            confidence = get_confidence(abs(away_pct - home_pct))
+        if away_pct is None or home_pct is None:
+            continue
 
-            msg += f"⚾ {away_team} vs {home_team}\n"
-            msg += f"Pitcher Visitante: {format_pitcher(away)}\n"
-            msg += f"Pitcher Local: {format_pitcher(home)}\n"
-            msg += f"📊 Visitante: {away_pct}% | Local: {home_pct}%\n"
-            msg += f"🎯 {confidence}\n\n"
-            msg += "──────────────────\n\n"
+        diff = abs(away_pct - home_pct)
 
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg},
-        timeout=10
-    )
+        confidence = get_confidence(diff)
+        pick = get_pick(away_pct, home_pct)
 
-    print("OK")
+        msg += f"⚾ {away_team} vs {home_team}\n\n"
+        msg += f"Pitcher Visitante: {format_pitcher(away)}\n"
+        msg += f"Pitcher Local: {format_pitcher(home)}\n\n"
+
+        msg += f"📊 Probabilidad:\n"
+        msg += f"Visitante: {away_pct}%\n"
+        msg += f"Local: {home_pct}%\n\n"
+
+        msg += f"🎯 {confidence}\n"
+        msg += f"{pick}\n"
+
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg},
+            timeout=10
+        )
+
+        print(f"Enviado: {away_team} vs {home_team}")
 
 
 if __name__ == "__main__":
