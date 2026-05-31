@@ -8,19 +8,19 @@ SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
 
 # -----------------------------
-# OBTENER STATS DEL PITCHER
+# STATS DEL PITCHER (ERA / WHIP)
 # -----------------------------
 def get_pitcher_stats(player_id):
     try:
         url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
         data = requests.get(url, timeout=10).json()
 
-        splits = data["stats"][0]["splits"]
+        stats = data.get("stats", [])
 
-        if not splits:
+        if not stats or not stats[0].get("splits"):
             return None, None
 
-        stat = splits[0]["stat"]
+        stat = stats[0]["splits"][0]["stat"]
 
         era = stat.get("era")
         whip = stat.get("whip")
@@ -32,7 +32,7 @@ def get_pitcher_stats(player_id):
 
 
 # -----------------------------
-# PITCHERS (nombre + stats)
+# PITCHERS (NOMBRE + STATS)
 # -----------------------------
 def get_probable_pitchers(game_pk):
     try:
@@ -77,21 +77,21 @@ def get_probable_pitchers(game_pk):
 
 
 # -----------------------------
-# FORMATO LIMPIO
+# FORMATO DE TEXTO
 # -----------------------------
 def format_pitcher(p):
-    if not p or not p["name"]:
+    if not p or not p.get("name"):
         return "TBD (no confirmado)"
 
-    name = p["name"]
-    era = p["era"] if p["era"] else "N/A"
-    whip = p["whip"] if p["whip"] else "N/A"
+    name = p.get("name")
+    era = p.get("era") if p.get("era") else "N/A"
+    whip = p.get("whip") if p.get("whip") else "N/A"
 
     return f"{name} | ERA: {era} | WHIP: {whip}"
 
 
 # -----------------------------
-# MAIN
+# MAIN BOT
 # -----------------------------
 def main():
     respuesta = requests.get(SCHEDULE_URL, timeout=10).json()
@@ -127,18 +127,6 @@ def main():
 
     requests.post(
         url,
-        json={
-            "chat_id": CHAT_ID,
-            "text": mensaje
-        },
-        timeout=10
-    )
-
-    print("Mensaje enviado correctamente")
-
-
-if __name__ == "__main__":
-    main()        url,
         json={
             "chat_id": CHAT_ID,
             "text": mensaje
