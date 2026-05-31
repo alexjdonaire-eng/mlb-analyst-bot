@@ -17,23 +17,22 @@ if fechas:
     juegos = fechas[0].get("games", [])
 
     for juego in juegos:
-        visitante = juego["teams"]["away"]["team"]["name"]
-        local = juego["teams"]["home"]["team"]["name"]
+    visitante = juego["teams"]["away"]["team"]["name"]
+    local = juego["teams"]["home"]["team"]["name"]
 
-        mensaje += f"{visitante} vs {local}\n"
+    mensaje += f"⚾ {visitante} vs {local}\n"
 
-else:
-    mensaje += "No se encontraron juegos."
+    away_pitcher = juego["teams"]["away"].get("probablePitcher")
+    home_pitcher = juego["teams"]["home"].get("probablePitcher")
 
-# Enviar a Telegram
-url_telegram = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    if away_pitcher:
+        mensaje += f"Visitante: {away_pitcher['fullName']}\n"
+    else:
+        mensaje += "Visitante: Por confirmar\n"
 
-requests.post(
-    url_telegram,
-    json={
-        "chat_id": CHAT_ID,
-        "text": mensaje
-    }
-)
+    if home_pitcher:
+        mensaje += f"Local: {home_pitcher['fullName']}\n"
+    else:
+        mensaje += "Local: Por confirmar\n"
 
-print("Mensaje enviado")
+    mensaje += "\n─────────────\n\n"
