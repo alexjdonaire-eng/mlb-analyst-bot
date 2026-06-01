@@ -103,6 +103,7 @@ def main():
                 away_odds = o["price"]
 
         if not home_odds or not away_odds:
+    contif not home_odds or not away_odds:
     continue
 
 # =========================
