@@ -173,9 +173,8 @@ if reporte != "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n":
     send_message(reporte)
 else:
     send_message("❌ No se encontraron picks con valor hoy.")
-```
 
 print("BOT INICIADO")
 
-if **name** == "**main**":
-main()
+if __name__ == "__main__":
+    main()
