@@ -3,19 +3,16 @@ import requests
 from datetime import datetime, timezone
 import math
 
-# =========================
-# CONFIG
-# =========================
-
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+PITCHERS_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date="
 
 
 # =========================
-# LOGS
+# LOG SYSTEM
 # =========================
 
 def log(msg):
@@ -27,10 +24,6 @@ def log(msg):
 # =========================
 
 def send_message(text):
-    if not TOKEN or not CHAT_ID:
-        log("❌ Missing Telegram config")
-        return
-
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -41,22 +34,7 @@ def send_message(text):
 
 
 # =========================
-# MATH
-# =========================
-
-def prob(odds):
-    return 1 / odds if odds else 0
-
-
-def remove_vig(p1, p2):
-    total = p1 + p2
-    if total == 0:
-        return 0, 0
-    return p1 / total, p2 / total
-
-
-# =========================
-# MODEL
+# MATH MODEL
 # =========================
 
 ratings = {
@@ -93,23 +71,73 @@ ratings = {
 }
 
 
+# =========================
+# MODEL
+# =========================
+
 def predict(home, away):
     a = ratings.get(home, 50)
     b = ratings.get(away, 50)
 
     diff = a - b
-
     p_home = 1 / (1 + math.exp(-diff / 10))
     p_away = 1 - p_home
 
     return p_home, p_away
 
 
+def prob(odds):
+    return 1 / odds
+
+
+def remove_vig(p1, p2):
+    total = p1 + p2
+    return p1 / total, p2 / total
+
+
 # =========================
-# ANALYSIS
+# PITCHER FETCH (REAL MLB API)
 # =========================
 
-def analyze_game(home, away, home_odds, away_odds):
+def get_pitchers():
+    try:
+        url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + datetime.utcnow().strftime("%Y-%m-%d")
+        r = requests.get(url, timeout=10)
+        return r.json()
+    except:
+        return None
+
+
+def extract_pitchers(data, home, away):
+    try:
+        games = data.get("dates", [])[0].get("games", [])
+        for g in games:
+            teams = g["teams"]
+            home_p = teams["home"]["probablePitcher"]["fullName"]
+            away_p = teams["away"]["probablePitcher"]["fullName"]
+            home_era = teams["home"]["probablePitcher"]["stats"][0]["splits"][0]["stat"]["era"]
+            away_era = teams["away"]["probablePitcher"]["stats"][0]["splits"][0]["stat"]["era"]
+
+            return {
+                "home_pitcher": home_p,
+                "away_pitcher": away_p,
+                "home_era": float(home_era),
+                "away_era": float(away_era)
+            }
+    except:
+        return {
+            "home_pitcher": "TBD",
+            "away_pitcher": "TBD",
+            "home_era": 4.20,
+            "away_era": 4.20
+        }
+
+
+# =========================
+# EDGE ENGINE (SHARP)
+# =========================
+
+def analyze(home, away, home_odds, away_odds, pitchers):
 
     p_home = prob(home_odds)
     p_away = prob(away_odds)
@@ -118,13 +146,24 @@ def analyze_game(home, away, home_odds, away_odds):
 
     m_home, m_away = predict(home, away)
 
+    # pitcher adjustment (VERY IMPORTANT)
+    home_adj = 1 / (pitchers["home_era"] + 1)
+    away_adj = 1 / (pitchers["away_era"] + 1)
+
+    m_home *= home_adj
+    m_away *= away_adj
+
+    total = m_home + m_away
+    m_home /= total
+    m_away /= total
+
     edge_home = m_home - p_home
     edge_away = m_away - p_away
 
     if edge_home > edge_away:
-        return home, edge_home
+        return home, edge_home, m_home, p_home, pitchers["home_pitcher"], pitchers["home_era"]
     else:
-        return away, edge_away
+        return away, edge_away, m_away, p_away, pitchers["away_pitcher"], pitchers["away_era"]
 
 
 # =========================
@@ -133,117 +172,96 @@ def analyze_game(home, away, home_odds, away_odds):
 
 def main():
 
-    log("🚀 BOT STARTED")
+    log("🚀 SHARP MODE PRO STARTED")
 
-    try:
-        r = requests.get(
-            URL,
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "h2h",
-                "oddsFormat": "decimal"
-            },
-            timeout=10
-        )
-    except Exception as e:
-        log(f"API ERROR: {e}")
-        return
-
-    if r.status_code != 200:
-        log(f"API FAIL: {r.text}")
-        return
+    r = requests.get(
+        URL,
+        params={
+            "apiKey": ODDS_API_KEY,
+            "regions": "us",
+            "markets": "h2h",
+            "oddsFormat": "decimal"
+        }
+    )
 
     games = r.json()
+    log(f"📦 Games loaded: {len(games)}")
 
-    log(f"📦 Games received: {len(games)}")
+    pitcher_data = get_pitchers()
 
-    seen_games = set()
-    sent_games = set()
+    all_picks = []
 
     for game in games:
 
-        home = game.get("home_team")
-        away = game.get("away_team")
+        home = game["home_team"]
+        away = game["away_team"]
 
-        if not home or not away:
-            continue
-
-        # =========================
-        # FILTER DATE (HOY ONLY)
-        # =========================
-
-        game_time = game.get("commence_time")
-
-        if game_time:
-            game_dt = datetime.fromisoformat(game_time.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-
-            if abs((game_dt - now).total_seconds()) > 86400:
-                continue
-
-        # =========================
-        # REMOVE DUPLICATES
-        # =========================
-
-        game_key = f"{away}_vs_{home}"
-
-        if game_key in seen_games:
-            continue
-
-        seen_games.add(game_key)
-
-        # =========================
-        # VALIDATE DATA
-        # =========================
-
-        if not game.get("bookmakers"):
+        if not game["bookmakers"]:
             continue
 
         book = game["bookmakers"][0]
-
-        if not book.get("markets"):
-            continue
-
-        outcomes = book["markets"][0].get("outcomes", [])
-
-        if not outcomes:
-            continue
+        outcomes = book["markets"][0]["outcomes"]
 
         home_odds = None
         away_odds = None
 
         for o in outcomes:
-            if o.get("name") == home:
-                home_odds = o.get("price")
-            if o.get("name") == away:
-                away_odds = o.get("price")
+            if o["name"] == home:
+                home_odds = o["price"]
+            if o["name"] == away:
+                away_odds = o["price"]
 
         if not home_odds or not away_odds:
             continue
 
-        pick, edge = analyze_game(home, away, home_odds, away_odds)
+        pitchers = extract_pitchers(pitcher_data, home, away)
 
-        if edge < 0.10:
+        pick, edge, model_p, market_p, pitcher, era = analyze(
+            home, away, home_odds, away_odds, pitchers
+        )
+
+        all_picks.append({
+            "game": f"{away} vs {home}",
+            "pick": pick,
+            "edge": edge,
+            "model": model_p,
+            "market": market_p,
+            "pitcher": pitcher,
+            "era": era
+        })
+
+    # =========================
+    # RANK PICKS (SHARP STYLE)
+    # =========================
+
+    all_picks.sort(key=lambda x: x["edge"], reverse=True)
+
+    log(f"🏁 Total picks: {len(all_picks)}")
+
+    # send TOP 6 ONLY (sharp constraint)
+    for p in all_picks[:6]:
+
+        if p["edge"] < 0.06:
             continue
 
-        if game_key in sent_games:
-            continue
+        message = f"""⚾ SHARP MLB ALERT
 
-        sent_games.add(game_key)
+{p['game']}
 
-        message = f"""⚾ MLB TRADING ALERT
+🎯 PICK: {p['pick']}
+📊 Edge: {round(p['edge']*100,2)}%
+📈 Model: {round(p['model']*100,2)}%
+📉 Market: {round(p['market']*100,2)}
 
-{away} vs {home}
+🔥 Pitcher: {p['pitcher']}
+📊 ERA: {p['era']}
 
-🎯 PICK: {pick}
-📊 Edge: {round(edge*100,2)}%
-
+🧠 SHARP MODE PRO
 🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
 """
 
         send_message(message)
-        log(f"📩 SENT: {game_key}")
+        log(f"📩 SENT: {p['game']}")
 
 
 if __name__ == "__main__":
