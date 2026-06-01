@@ -1,245 +1,194 @@
 import os
 import requests
-import optuna
-from datetime import datetime
+import time
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# =========================
+# CONFIG (SEGURA)
+# =========================
+TOKEN = os.getenv("8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_Sew")
+CHAT_ID = os.getenv("5163780989")
 
-SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+BANKROLL = 1000
 
-# -----------------------------
-# MODELO (PESOS BASE)
-# -----------------------------
-def model(away, home, offense, away_team, home_team, w):
+# =========================
+# TELEGRAM
+# =========================
+def send_message(text):
+    if not TOKEN or not CHAT_ID:
+        print("⚠️ TELEGRAM NO CONFIGURADO")
+        print(text)
+        return
 
-    a = 50
-    h = 50
-
-    a += (home["era"] - away["era"]) * w["era"]
-    h -= (home["era"] - away["era"]) * w["era"]
-
-    a += (home["whip"] - away["whip"]) * w["whip"]
-    h -= (home["whip"] - away["whip"]) * w["whip"]
-
-    if away_team in offense and home_team in offense:
-        diff = offense[away_team] - offense[home_team]
-        a += diff * w["offense"]
-        h -= diff * w["offense"]
-
-    total = a + h
-
-    return a / total, h / total
-
-
-# -----------------------------
-# PITCHERS
-# -----------------------------
-def get_pitcher_stats(pid):
     try:
-        url = f"https://statsapi.mlb.com/api/v1/people/{pid}/stats?stats=season&group=pitching"
-        data = requests.get(url).json()
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": text}
+        )
+    except Exception as e:
+        print("Telegram error:", e)
 
-        s = data["stats"][0]["splits"][0]["stat"]
-        return float(s.get("era", 0)), float(s.get("whip", 0))
-    except:
-        return 0, 0
 
-
-def get_pitchers(game_pk):
-    url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-    data = requests.get(url).json()
-
-    p = data.get("gameData", {}).get("probablePitchers", {})
-
+# =========================
+# ODDS (SIMULADO - luego API real)
+# =========================
+def get_odds():
     return {
-        "away": p.get("away", {}),
-        "home": p.get("home", {})
+        "home_odds": 1.92,
+        "away_odds": 2.05
     }
 
 
-# -----------------------------
-# OFENSIVA
-# -----------------------------
-def get_offense():
-    url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
-    data = requests.get(url).json()
-
-    teams = {}
-
-    for r in data["records"]:
-        for t in r["teamRecords"]:
-            name = t["team"]["name"]
-            runs = float(t.get("runsScored", 0))
-            games = float(t.get("gamesPlayed", 1))
-            teams[name] = runs / games
-
-    return teams
+def implied_prob(odds):
+    return 1 / odds
 
 
-# -----------------------------
-# CLV REAL (OPEN vs CLOSE SIMULADO/REAL)
-# -----------------------------
-def clv(open_prob, close_prob):
-    return open_prob - close_prob
+# =========================
+# MODELO (BASE)
+# =========================
+def model():
+    # placeholder del modelo MLB
+    return 0.54, 0.46
 
 
-# -----------------------------
-# SIMULACIÓN DE MERCADO (REEMPLAZABLE POR BOOK REAL)
-# -----------------------------
-def market_prob(team_strength):
-    # proxy simple de mercado
-    return team_strength * 0.98
+# =========================
+# STEAM DETECTION
+# =========================
+steam_memory = {}
 
-
-# -----------------------------
-# DATASET PARA OPTUNA
-# -----------------------------
-def build_dataset():
-
-    data = requests.get(SCHEDULE_URL).json()
-    offense = get_offense()
-
-    dataset = []
-
-    games = data.get("dates", [])[0].get("games", [])
-
-    for g in games:
-
-        pk = g["gamePk"]
-
-        away_team = g["teams"]["away"]["team"]["name"]
-        home_team = g["teams"]["home"]["team"]["name"]
-
-        pitchers = get_pitchers(pk)
-
-        away = pitchers["away"]
-        home = pitchers["home"]
-
-        away_stats = {"era": 0, "whip": 0}
-        home_stats = {"era": 0, "whip": 0}
-
-        if away.get("id"):
-            away_stats["era"], away_stats["whip"] = get_pitcher_stats(away["id"])
-
-        if home.get("id"):
-            home_stats["era"], home_stats["whip"] = get_pitcher_stats(home["id"])
-
-        # placeholder weights (se optimizan con optuna)
-        w = {"era": 8, "whip": 6, "offense": 7}
-
-        a, h = model(away_stats, home_stats, offense, away_team, home_team, w)
-
-        model_prob = max(a, h)
-        market = market_prob(model_prob)
-
-        dataset.append({
-            "model": model_prob,
-            "market": market
-        })
-
-    return dataset
-
-
-# -----------------------------
-# OPTUNA OBJECTIVE (CLV MAXIMIZATION)
-# -----------------------------
-def objective(trial):
-
-    w = {
-        "era": trial.suggest_float("era", 1, 20),
-        "whip": trial.suggest_float("whip", 1, 20),
-        "offense": trial.suggest_float("offense", 1, 20)
+def save_open(game_id, odds):
+    steam_memory[game_id] = {
+        "open": odds,
+        "time": time.time()
     }
 
-    data = build_dataset()
 
-    total_clv = 0
+def detect_steam(game_id, current_odds):
+    if game_id not in steam_memory:
+        return None
 
-    for d in data:
-        total_clv += clv(d["model"], d["market"])
+    open_odds = steam_memory[game_id]["open"]
 
-    return total_clv
+    move = open_odds - current_odds
+    pct = (move / open_odds) * 100
 
+    speed = pct / (time.time() - steam_memory[game_id]["time"] + 1)
 
-# -----------------------------
-# OPTIMIZACIÓN BAYESIANA
-# -----------------------------
-def optimize_model():
+    if pct > 3 and speed > 0.25:
+        return True
 
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=30)
-
-    print("\n🏦 BEST MODEL:")
-    print(study.best_params)
-
-    return study.best_params
+    return False
 
 
-# -----------------------------
-# LIVE BOT (SIMPLIFICADO)
-# -----------------------------
-def run_live(weights):
+# =========================
+# CLV
+# =========================
+def clv(model_p, market_p):
+    return model_p - market_p
 
-    data = requests.get(SCHEDULE_URL).json()
-    offense = get_offense()
 
-    games = data.get("dates", [])[0].get("games", [])
+# =========================
+# KELLY
+# =========================
+def ev(prob, odds):
+    return (prob * (odds - 1)) - (1 - prob)
 
-    for g in games:
 
-        pk = g["gamePk"]
+def kelly(prob, odds):
+    e = ev(prob, odds)
+    if e <= 0:
+        return 0
+    return e / (odds - 1)
 
-        away_team = g["teams"]["away"]["team"]["name"]
-        home_team = g["teams"]["home"]["team"]["name"]
 
-        pitchers = get_pitchers(pk)
+def position_size(bankroll, prob, odds, clv_val, steam_ok):
 
-        away = pitchers["away"]
-        home = pitchers["home"]
+    k = kelly(prob, odds) * 0.25
 
-        away_stats = {"era": 0, "whip": 0}
-        home_stats = {"era": 0, "whip": 0}
+    risk = 1.0
+    if clv_val > 0.02:
+        risk += 0.4
+    else:
+        risk -= 0.3
 
-        if away.get("id"):
-            away_stats["era"], away_stats["whip"] = get_pitcher_stats(away["id"])
+    if steam_ok:
+        risk += 0.4
+    else:
+        risk -= 0.4
 
-        if home.get("id"):
-            home_stats["era"], home_stats["whip"] = get_pitcher_stats(home["id"])
+    risk = max(0.1, min(risk, 1.5))
 
-        a, h = model(away_stats, home_stats, offense, away_team, home_team, weights)
+    stake = bankroll * k * risk
 
-        pick = "VISITANTE" if a > h else "LOCAL"
+    max_bet = bankroll * 0.05
+    min_bet = bankroll * 0.002
 
-        msg = f"""🏦 MLB QUANT FUND v3 🏦
+    if stake > max_bet:
+        stake = max_bet
 
-{away_team} vs {home_team}
+    if stake < min_bet:
+        return 0
 
-📊 Probabilidad:
-Visitante: {round(a*100,2)}%
-Local: {round(h*100,2)}%
+    return round(stake, 2)
 
-📌 PICK: {pick}
+
+# =========================
+# BOT PRINCIPAL
+# =========================
+def run():
+
+    game_id = "MLB_GAME_001"
+
+    odds = get_odds()
+
+    home_odds = odds["home_odds"]
+    away_odds = odds["away_odds"]
+
+    home_p = implied_prob(home_odds)
+    away_p = implied_prob(away_odds)
+
+    model_home, model_away = model()
+
+    model_p = max(model_home, model_away)
+    market_p = max(home_p, away_p)
+
+    pick = "HOME" if model_home > model_away else "AWAY"
+
+    clv_val = clv(model_p, market_p)
+
+    save_open(game_id, home_odds)
+    steam_ok = detect_steam(game_id, home_odds)
+
+    bet = clv_val > 0 and steam_ok
+
+    stake = position_size(
+        BANKROLL,
+        model_p,
+        home_odds,
+        clv_val,
+        steam_ok
+    )
+
+    msg = f"""
+🏦 MLB FUND BOT v5 🏦
+
+⚾ PICK: {pick}
+
+📊 MODEL: {round(model_p*100,2)}%
+📉 MARKET: {round(market_p*100,2)}%
+
+📈 CLV: {round(clv_val*100,3)}%
+
+🚨 STEAM: {"YES" if steam_ok else "NO"}
+
+💰 STAKE: ${stake}
+
+🎯 DECISION: {"BET" if bet else "NO BET"}
 
 ──────────────────
 """
 
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg}
-        )
-
-        print("Sent:", away_team, home_team)
+    send_message(msg)
 
 
-# -----------------------------
-# MAIN
-# -----------------------------
 if __name__ == "__main__":
-
-    print("🔁 Running Optuna optimization...")
-    best = optimize_model()
-
-    print("🚀 Running live bot...")
-
-    run_live(best)
+    run()
