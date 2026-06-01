@@ -1,22 +1,44 @@
-# =========================
-# config.py
-# =========================
-
 import os
+import requests
+import math
+
+# =========================
+# CONFIG
+# =========================
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 
 # =========================
-# utils/math_utils.py
+# TELEGRAM
+# =========================
+
+def send_message(text):
+    if not TOKEN or not CHAT_ID:
+        print("Missing Telegram env vars")
+        return
+
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": text}
+        )
+    except Exception as e:
+        print("Telegram error:", e)
+
+
+# =========================
+# MATH FUNCTIONS
 # =========================
 
 def prob(odds):
-    return 1 / odds if odds else 0
+    if not odds:
+        return 0
+    return 1 / odds
 
 
 def remove_vig(p1, p2):
@@ -27,10 +49,8 @@ def remove_vig(p1, p2):
 
 
 # =========================
-# models/mlb_model.py
+# MLB MODEL (ELO SIMPLE)
 # =========================
-
-import math
 
 ratings = {
     "Los Angeles Dodgers": 60,
@@ -79,28 +99,13 @@ def predict(team_a, team_b):
 
 
 # =========================
-# services/telegram.py
+# DATA FETCH
 # =========================
 
-import requests
-
-def send_message(text, TOKEN, CHAT_ID):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": text}
-        )
-    except Exception as e:
-        print("Telegram error:", e)
-
-
-# =========================
-# services/odds_api.py
-# =========================
-
-import requests
-
-def get_games(URL, ODDS_API_KEY):
+def get_games():
+    if not ODDS_API_KEY:
+        print("Missing ODDS_API_KEY")
+        return []
 
     params = {
         "apiKey": ODDS_API_KEY,
@@ -113,21 +118,19 @@ def get_games(URL, ODDS_API_KEY):
         r = requests.get(URL, params=params, timeout=10)
 
         if r.status_code != 200:
+            print("Odds API error:", r.status_code)
             return []
 
         return r.json()
 
     except Exception as e:
-        print("Odds API error:", e)
+        print("API error:", e)
         return []
 
 
 # =========================
-# core/analyzer.py
+# ANALYSIS
 # =========================
-
-from models.mlb_model import predict
-from utils.math_utils import prob, remove_vig
 
 def analyze_game(home, away, home_odds, away_odds):
 
@@ -148,32 +151,30 @@ def analyze_game(home, away, home_odds, away_odds):
 
 
 # =========================
-# main.py
+# MAIN
 # =========================
-
-from config import TOKEN, CHAT_ID, URL, ODDS_API_KEY
-from services.telegram import send_message
-from services.odds_api import get_games
-from core.analyzer import analyze_game
-
 
 def main():
 
-    games = get_games(URL, ODDS_API_KEY)
+    print("🚀 MLB BOT RUNNING...")
+
+    games = get_games()
 
     if not games:
-        send_message("❌ Error o sin datos de partidos", TOKEN, CHAT_ID)
+        send_message("❌ No se encontraron juegos o error API")
         return
 
     reporte = "⚾ MLB PICKS DEL DÍA ⚾\n\n"
 
-    for game in games:
+    picks_count = 0
 
-        home = game["home_team"]
-        away = game["away_team"]
+    for game in games:
 
         if not game.get("bookmakers"):
             continue
+
+        home = game["home_team"]
+        away = game["away_team"]
 
         book = game["bookmakers"][0]
 
@@ -202,13 +203,28 @@ def main():
         if edge < 0.10:
             continue
 
+        picks_count += 1
+
+        if picks_count > 5:
+            break
+
+        confidence = (
+            "🔥 MUY ALTA" if edge >= 0.20 else
+            "✅ ALTA" if edge >= 0.15 else
+            "⚠️ MEDIA"
+        )
+
         reporte += (
             f"{away} vs {home}\n"
             f"🎯 Pick: {pick}\n"
-            f"📈 Edge: {round(edge * 100, 2)}%\n\n"
+            f"📈 Edge: {round(edge*100,2)}%\n"
+            f"📊 Confianza: {confidence}\n\n"
         )
 
-    send_message(reporte, TOKEN, CHAT_ID)
+    if picks_count == 0:
+        send_message("❌ No hay picks con valor hoy")
+    else:
+        send_message(reporte)
 
 
 if __name__ == "__main__":
