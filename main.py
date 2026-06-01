@@ -172,11 +172,18 @@ def main():
         home = game["home_team"]
         away = game["away_team"]
 
-        if not game["bookmakers"]:
+        if not game.get("bookmakers"):
             continue
 
         book = game["bookmakers"][0]
-        outcomes = book["markets"][0]["outcomes"]
+
+        if not book.get("markets"):
+            continue
+
+        outcomes = book["markets"][0].get("outcomes", [])
+
+        if not outcomes:
+            continue
 
         home_odds = None
         away_odds = None
@@ -198,7 +205,7 @@ def main():
         reporte += (
             f"{away} vs {home}\n"
             f"🎯 Pick: {pick}\n"
-            f"📈 Edge: {round(edge*100,2)}%\n\n"
+            f"📈 Edge: {round(edge * 100, 2)}%\n\n"
         )
 
     send_message(reporte, TOKEN, CHAT_ID)
