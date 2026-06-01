@@ -86,6 +86,8 @@ def modelo_mlb(team_a, team_b):
 # =========================
 def main():
 
+    print("EJECUTANDO MAIN")
+
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
