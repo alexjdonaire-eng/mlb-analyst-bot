@@ -121,11 +121,25 @@ def main():
         # =========================
         # EDGE REAL
         # =========================
-        edge_home = m_home - p_home
-        edge_away = m_away - p_away
+        # seguridad de rangos
+m_home = min(max(m_home, 0), 1)
+m_away = min(max(m_away, 0), 1)
 
-        mejor = home if edge_home > edge_away else away
-        edge = max(edge_home, edge_away)
+p_home = min(max(p_home, 0), 1)
+p_away = min(max(p_away, 0), 1)
+
+# edge real
+edge_home = m_home - p_home
+edge_away = m_away - p_away
+
+edge = max(edge_home, edge_away)
+
+# límite anti-explosión
+edge = max(min(edge), -1)
+edge = min(edge, 1)
+
+# favorito
+mejor = home if edge_home > edge_away else away
 
         # =========================
         # FILTRO REAL
