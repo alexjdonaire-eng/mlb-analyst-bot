@@ -87,82 +87,76 @@ def main():
 
         for game in games:
 
-        home = game["home_team"]
-        away = game["away_team"]
+            home = game["home_team"]
+            away = game["away_team"]
 
-        book = game["bookmakers"][0]
-        outcomes = book["markets"][0]["outcomes"]
+            book = game["bookmakers"][0]
+            outcomes = book["markets"][0]["outcomes"]
 
-        home_odds = None
-        away_odds = None
+            home_odds = None
+            away_odds = None
 
-        for o in outcomes:
-            if o["name"] == home:
-                home_odds = o["price"]
+            for o in outcomes:
+                if o["name"] == home:
+                    home_odds = o["price"]
 
-            if o["name"] == away:
-                away_odds = o["price"]
+                if o["name"] == away:
+                    away_odds = o["price"]
 
-        if not home_odds or not away_odds:
-            continue
+            if not home_odds or not away_odds:
+                continue
 
-    # =========================
-    # MERCADO
-    # =========================
-    p_home = prob(home_odds)
-    p_away = prob(away_odds)
+            # =========================
+            # MERCADO
+            # =========================
+            p_home = prob(home_odds)
+            p_away = prob(away_odds)
 
-    p_home, p_away = remove_vig(p_home, p_away)
+            p_home, p_away = remove_vig(p_home, p_away)
 
-    # =========================
-    # MODELO
-    # =========================
-    m_home, m_away = modelo_mlb(home, away)
+            # =========================
+            # MODELO
+            # =========================
+            m_home, m_away = modelo_mlb(home, away)
 
-    # =========================
-    # SEGURIDAD
-    # =========================
-    m_home = min(max(m_home, 0), 1)
-    m_away = min(max(m_away, 0), 1)
+            # =========================
+            # SEGURIDAD
+            # =========================
+            m_home = min(max(m_home, 0), 1)
+            m_away = min(max(m_away, 0), 1)
 
-    p_home = min(max(p_home, 0), 1)
-    p_away = min(max(p_away, 0), 1)
+            p_home = min(max(p_home, 0), 1)
+            p_away = min(max(p_away, 0), 1)
 
-    # =========================
-    # EDGE
-    # =========================
-    edge_home = m_home - p_home
-    edge_away = m_away - p_away
+            # =========================
+            # EDGE
+            # =========================
+            edge_home = m_home - p_home
+            edge_away = m_away - p_away
 
-    edge = max(edge_home, edge_away)
-    edge = max(min(edge, 1), -1)
+            edge = max(edge_home, edge_away)
+            edge = max(min(edge, 1), -1)
 
-    mejor = home if edge_home > edge_away else away
+            mejor = home if edge_home > edge_away else away
 
-    # =========================
-    # FILTRO
-    # =========================
-    if edge < 0.01:
-        print("Sin valor:", away, "vs", home)
-        continue
+            if edge < 0.01:
+                print("Sin valor:", away, "vs", home)
+                continue
 
-    # =========================
-    # MENSAJE
-    # =========================
-    msg = (
-        f"🏦 SISTEMA\n\n"
-        f"⚾ {away} vs {home}\n\n"
-        f"📊 Mercado:\n"
-        f"{away}: {round(p_away*100,2)}%\n"
-        f"{home}: {round(p_home*100,2)}%\n\n"
-        f"🧠 Modelo:\n"
-        f"{away}: {round(m_away*100,2)}%\n"
-        f"{home}: {round(m_home*100,2)}%\n\n"
-        f"📈 Edge: {round(edge*100,3)}%\n\n"
-        f"📌 Favorito modelo: {mejor}\n"
-    )
+            msg = (
+                f"🏦 SISTEMA\n\n"
+                f"⚾ {away} vs {home}\n\n"
+                f"📊 Mercado:\n"
+                f"{away}: {round(p_away*100,2)}%\n"
+                f"{home}: {round(p_home*100,2)}%\n\n"
+                f"🧠 Modelo:\n"
+                f"{away}: {round(m_away*100,2)}%\n"
+                f"{home}: {round(m_home*100,2)}%\n\n"
+                f"📈 Edge: {round(edge*100,3)}%\n\n"
+                f"📌 Favorito modelo: {mejor}\n"
+            )
 
-    send_message(msg)
+            send_message(msg)
 
 
 if __name__ == "__main__":
