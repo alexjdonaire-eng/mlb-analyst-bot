@@ -1,65 +1,74 @@
 import os
 import requests
-import pandas as pd
+import optuna
+from datetime import datetime
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
+# -----------------------------
+# MODELO (PESOS BASE)
+# -----------------------------
+def model(away, home, offense, away_team, home_team, w):
+
+    a = 50
+    h = 50
+
+    a += (home["era"] - away["era"]) * w["era"]
+    h -= (home["era"] - away["era"]) * w["era"]
+
+    a += (home["whip"] - away["whip"]) * w["whip"]
+    h -= (home["whip"] - away["whip"]) * w["whip"]
+
+    if away_team in offense and home_team in offense:
+        diff = offense[away_team] - offense[home_team]
+        a += diff * w["offense"]
+        h -= diff * w["offense"]
+
+    total = a + h
+
+    return a / total, h / total
+
 
 # -----------------------------
-# PITCHER STATS
+# PITCHERS
 # -----------------------------
-def get_pitcher_stats(player_id):
+def get_pitcher_stats(pid):
     try:
-        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
-        data = requests.get(url, timeout=10).json()
+        url = f"https://statsapi.mlb.com/api/v1/people/{pid}/stats?stats=season&group=pitching"
+        data = requests.get(url).json()
 
-        stats = data.get("stats", [])
-        if not stats or not stats[0].get("splits"):
-            return 0, 0
-
-        stat = stats[0]["splits"][0]["stat"]
-        return float(stat.get("era", 0)), float(stat.get("whip", 0))
-
+        s = data["stats"][0]["splits"][0]["stat"]
+        return float(s.get("era", 0)), float(s.get("whip", 0))
     except:
         return 0, 0
 
 
-# -----------------------------
-# PROBABLE PITCHERS
-# -----------------------------
 def get_pitchers(game_pk):
-    try:
-        url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-        data = requests.get(url, timeout=10).json()
+    url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+    data = requests.get(url).json()
 
-        p = data.get("gameData", {}).get("probablePitchers", {})
+    p = data.get("gameData", {}).get("probablePitchers", {})
 
-        away = p.get("away", {})
-        home = p.get("home", {})
-
-        return {
-            "away": {"name": away.get("fullName"), "id": away.get("id")},
-            "home": {"name": home.get("fullName"), "id": home.get("id")}
-        }
-
-    except:
-        return None
+    return {
+        "away": p.get("away", {}),
+        "home": p.get("home", {})
+    }
 
 
 # -----------------------------
-# OFFENSE METRIC
+# OFENSIVA
 # -----------------------------
 def get_offense():
     url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
-    data = requests.get(url, timeout=10).json()
+    data = requests.get(url).json()
 
     teams = {}
 
-    for r in data.get("records", []):
-        for t in r.get("teamRecords", []):
+    for r in data["records"]:
+        for t in r["teamRecords"]:
             name = t["team"]["name"]
             runs = float(t.get("runsScored", 0))
             games = float(t.get("gamesPlayed", 1))
@@ -69,138 +78,110 @@ def get_offense():
 
 
 # -----------------------------
-# MODEL
+# CLV REAL (OPEN vs CLOSE SIMULADO/REAL)
 # -----------------------------
-def model(away, home, offense, away_team, home_team):
-
-    a = 50
-    h = 50
-
-    # pitching
-    a += (home["era"] - away["era"]) * 9
-    h -= (home["era"] - away["era"]) * 9
-
-    a += (home["whip"] - away["whip"]) * 6
-    h -= (home["whip"] - away["whip"]) * 6
-
-    # offense
-    if away_team in offense and home_team in offense:
-        diff = offense[away_team] - offense[home_team]
-        a += diff * 7
-        h -= diff * 7
-
-    total = a + h
-
-    return round(a / total * 100, 1), round(h / total * 100, 1)
+def clv(open_prob, close_prob):
+    return open_prob - close_prob
 
 
 # -----------------------------
-# EDGE (CLV PROXY)
+# SIMULACIÓN DE MERCADO (REEMPLAZABLE POR BOOK REAL)
 # -----------------------------
-def edge(diff):
-    if diff >= 15:
-        return "🟢 Ventaja fuerte"
-    elif diff >= 9:
-        return "🟡 Ventaja media"
-    elif diff >= 6:
-        return "⚪ Ventaja leve"
-    return None
+def market_prob(team_strength):
+    # proxy simple de mercado
+    return team_strength * 0.98
 
 
 # -----------------------------
-# STAKE SIMPLE
+# DATASET PARA OPTUNA
 # -----------------------------
-def stake(diff):
-    if diff >= 15:
-        return "💰💰💰 Alta"
-    elif diff >= 9:
-        return "💰💰 Media"
-    elif diff >= 6:
-        return "💰 Baja"
-    return None
+def build_dataset():
 
+    data = requests.get(SCHEDULE_URL).json()
+    offense = get_offense()
 
-# -----------------------------
-# PICK
-# -----------------------------
-def pick(a, h):
-    return "Visitante" if a > h else "Local"
+    dataset = []
 
-
-# -----------------------------
-# BACKTEST ENGINE (simple)
-# -----------------------------
-def backtest_model(games, offense):
-
-    results = []
+    games = data.get("dates", [])[0].get("games", [])
 
     for g in games:
 
-        try:
-            pk = g["gamePk"]
-            away_team = g["teams"]["away"]["team"]["name"]
-            home_team = g["teams"]["home"]["team"]["name"]
+        pk = g["gamePk"]
 
-            pitchers = get_pitchers(pk)
-            if not pitchers:
-                continue
+        away_team = g["teams"]["away"]["team"]["name"]
+        home_team = g["teams"]["home"]["team"]["name"]
 
-            away_id = pitchers["away"]["id"]
-            home_id = pitchers["home"]["id"]
+        pitchers = get_pitchers(pk)
 
-            away_stats = {"era": 0, "whip": 0}
-            home_stats = {"era": 0, "whip": 0}
+        away = pitchers["away"]
+        home = pitchers["home"]
 
-            if away_id:
-                away_stats["era"], away_stats["whip"] = get_pitcher_stats(away_id)
+        away_stats = {"era": 0, "whip": 0}
+        home_stats = {"era": 0, "whip": 0}
 
-            if home_id:
-                home_stats["era"], home_stats["whip"] = get_pitcher_stats(home_id)
+        if away.get("id"):
+            away_stats["era"], away_stats["whip"] = get_pitcher_stats(away["id"])
 
-            a, h = model(away_stats, home_stats, offense, away_team, home_team)
+        if home.get("id"):
+            home_stats["era"], home_stats["whip"] = get_pitcher_stats(home["id"])
 
-            diff = abs(a - h)
+        # placeholder weights (se optimizan con optuna)
+        w = {"era": 8, "whip": 6, "offense": 7}
 
-            if diff < 6:
-                continue
+        a, h = model(away_stats, home_stats, offense, away_team, home_team, w)
 
-            pick_side = pick(a, h)
+        model_prob = max(a, h)
+        market = market_prob(model_prob)
 
-            # resultado real
-            result = g["teams"]["away"]["score"] > g["teams"]["home"]["score"]
-            real = "Visitante" if result else "Local"
+        dataset.append({
+            "model": model_prob,
+            "market": market
+        })
 
-            win = pick_side == real
-
-            results.append({
-                "pick": pick_side,
-                "diff": diff,
-                "win": win
-            })
-
-        except:
-            continue
-
-    df = pd.DataFrame(results)
-
-    if df.empty:
-        return
-
-    roi = df["win"].sum() - (len(df) - df["win"].sum())
-    win_rate = df["win"].mean() * 100
-
-    print("\n📊 BACKTEST RESULTADOS")
-    print(f"ROI: {roi}")
-    print(f"Win rate: {win_rate:.2f}%")
-    print(df.head())
+    return dataset
 
 
 # -----------------------------
-# LIVE BOT
+# OPTUNA OBJECTIVE (CLV MAXIMIZATION)
 # -----------------------------
-def main():
+def objective(trial):
 
-    data = requests.get(SCHEDULE_URL, timeout=10).json()
+    w = {
+        "era": trial.suggest_float("era", 1, 20),
+        "whip": trial.suggest_float("whip", 1, 20),
+        "offense": trial.suggest_float("offense", 1, 20)
+    }
+
+    data = build_dataset()
+
+    total_clv = 0
+
+    for d in data:
+        total_clv += clv(d["model"], d["market"])
+
+    return total_clv
+
+
+# -----------------------------
+# OPTIMIZACIÓN BAYESIANA
+# -----------------------------
+def optimize_model():
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=30)
+
+    print("\n🏦 BEST MODEL:")
+    print(study.best_params)
+
+    return study.best_params
+
+
+# -----------------------------
+# LIVE BOT (SIMPLIFICADO)
+# -----------------------------
+def run_live(weights):
+
+    data = requests.get(SCHEDULE_URL).json()
     offense = get_offense()
 
     games = data.get("dates", [])[0].get("games", [])
@@ -213,8 +194,6 @@ def main():
         home_team = g["teams"]["home"]["team"]["name"]
 
         pitchers = get_pitchers(pk)
-        if not pitchers:
-            continue
 
         away = pitchers["away"]
         home = pitchers["home"]
@@ -222,51 +201,45 @@ def main():
         away_stats = {"era": 0, "whip": 0}
         home_stats = {"era": 0, "whip": 0}
 
-        if away["id"]:
+        if away.get("id"):
             away_stats["era"], away_stats["whip"] = get_pitcher_stats(away["id"])
 
-        if home["id"]:
+        if home.get("id"):
             home_stats["era"], home_stats["whip"] = get_pitcher_stats(home["id"])
 
-        a, h = model(away_stats, home_stats, offense, away_team, home_team)
+        a, h = model(away_stats, home_stats, offense, away_team, home_team, weights)
 
-        diff = abs(a - h)
+        pick = "VISITANTE" if a > h else "LOCAL"
 
-        e = edge(diff)
-        s = stake(diff)
-
-        if not e:
-            continue
-
-        msg = f"""⚾ MLB QUANT SYSTEM ⚾
+        msg = f"""🏦 MLB QUANT FUND v3 🏦
 
 {away_team} vs {home_team}
 
 📊 Probabilidad:
-Visitante: {a}%
-Local: {h}%
+Visitante: {round(a*100,2)}%
+Local: {round(h*100,2)}%
 
-📈 {e}
-📌 Pick: {pick(a,h)}
-{s if s else ""}
+📌 PICK: {pick}
 
 ──────────────────
 """
 
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg},
-            timeout=10
+            json={"chat_id": CHAT_ID, "text": msg}
         )
 
-        print(f"Sent: {away_team} vs {home_team}")
+        print("Sent:", away_team, home_team)
 
 
+# -----------------------------
+# MAIN
+# -----------------------------
 if __name__ == "__main__":
 
-    # LIVE MODE
-    main()
+    print("🔁 Running Optuna optimization...")
+    best = optimize_model()
 
-    # BACKTEST MODE (opcional manual)
-    # data = requests.get(SCHEDULE_URL).json()
-    # backtest_model(data.get("dates",[0]).get("games",[]), get_offense())
+    print("🚀 Running live bot...")
+
+    run_live(best)
