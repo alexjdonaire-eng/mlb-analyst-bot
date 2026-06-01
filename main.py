@@ -17,7 +17,7 @@ SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 
 def get_pitcher_stats(player_id):
     try:
-url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
 data = requests.get(url, timeout=10).json()
 
 ```
