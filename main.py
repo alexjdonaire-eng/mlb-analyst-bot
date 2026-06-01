@@ -19,7 +19,7 @@ MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 # =========================
 
 def log(msg):
-    print(f"[LOG] {msg}")
+    print(f"[HEDGE FUND v4] {msg}")
 
 
 # =========================
@@ -32,35 +32,31 @@ def send_message(text):
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text}
         )
-    except:
-        pass
+    except Exception as e:
+        log(f"Telegram error: {e}")
 
 
 # =========================
-# NORMALIZE
+# UTIL
 # =========================
 
 def normalize(x):
     return x.lower().replace(" ", "")
 
 
-# =========================
-# PROBABILIDAD
-# =========================
-
-def prob(o):
-    return 1 / o if o else 0
+def prob(odds):
+    return 1 / odds if odds else 0
 
 
 def remove_vig(a, b):
-    t = a + b
-    if t == 0:
+    total = a + b
+    if total == 0:
         return 0, 0
-    return a / t, b / t
+    return a / total, b / total
 
 
 # =========================
-# MODELO SIMPLE
+# MARKET MODEL (CORE ONLY)
 # =========================
 
 ratings = {
@@ -76,7 +72,9 @@ ratings = {
     "texasrangers": 50,
     "torontobluejays": 44,
     "newyorkmets": 44,
-    "chicagowhitesox": 38
+    "chicagowhitesox": 38,
+    "milwaukeebrewers": 51,
+    "stlouiscardinals": 47
 }
 
 
@@ -86,14 +84,15 @@ def model(home, away):
 
     diff = h - a
 
-    p_home = 1 / (1 + (2.71828 ** (-diff / 10)))
+    # logistic simplificada (market-neutral base)
+    p_home = 1 / (1 + pow(2.71828, -diff / 10))
     p_away = 1 - p_home
 
     return p_home, p_away
 
 
 # =========================
-# PITCHERS + ERA REAL
+# PITCHERS (VERIFICATION ONLY)
 # =========================
 
 def get_pitchers():
@@ -111,7 +110,7 @@ def get_pitchers():
             home = g["teams"]["home"]["team"]["name"]
             away = g["teams"]["away"]["team"]["name"]
 
-            def extract(p):
+            def parse(p):
                 if not p:
                     return ("TBA", None)
 
@@ -120,15 +119,14 @@ def get_pitchers():
 
                 return (name, era)
 
-            ap = extract(g["teams"]["away"].get("probablePitcher"))
-            hp = extract(g["teams"]["home"].get("probablePitcher"))
+            ap = parse(g["teams"]["away"].get("probablePitcher"))
+            hp = parse(g["teams"]["home"].get("probablePitcher"))
 
             pitchers[(normalize(away), normalize(home))] = {
                 "away_name": ap[0],
                 "away_era": ap[1],
                 "home_name": hp[0],
-                "home_era": hp[1],
-                "source": "MLB"
+                "home_era": hp[1]
             }
 
     except:
@@ -145,40 +143,24 @@ def get_pitch(pitchers, away, home):
             "away_name": "TBA",
             "away_era": None,
             "home_name": "TBA",
-            "home_era": None,
-            "source": "NONE"
+            "home_era": None
         }
     )
 
 
 # =========================
-# DATA QUALITY
+# EDGE ENGINE
 # =========================
 
-def dq(p):
-    score = 100
-
-    if p["away_name"] == "TBA":
-        score -= 30
-    if p["home_name"] == "TBA":
-        score -= 30
-
-    return max(score, 0)
-
-
-def dq_label(s):
-    if s >= 80:
-        return "🟢 CONFIABLE"
-    if s >= 50:
-        return "🟡 PARCIAL"
-    return "🔴 BAJA"
+def compute_edge(market_prob, model_prob):
+    return model_prob - market_prob
 
 
 # =========================
-# ANALYSIS
+# ANALYZER
 # =========================
 
-def analyze(game, pitchers):
+def analyze(game):
 
     home = game["home_team"]
     away = game["away_team"]
@@ -205,12 +187,10 @@ def analyze(game, pitchers):
 
     p_home, p_away = remove_vig(p_home, p_away)
 
-    pitch = get_pitch(pitchers, away, home)
-
     m_home, m_away = model(home, away)
 
-    edge_home = m_home - p_home
-    edge_away = m_away - p_away
+    edge_home = compute_edge(p_home, m_home)
+    edge_away = compute_edge(p_away, m_away)
 
     if edge_home > edge_away:
         return {
@@ -219,8 +199,7 @@ def analyze(game, pitchers):
             "edge": edge_home,
             "model": m_home,
             "market": p_home,
-            "odds": home_o,
-            "pitch": pitch
+            "odds": home_o
         }
     else:
         return {
@@ -229,8 +208,7 @@ def analyze(game, pitchers):
             "edge": edge_away,
             "model": m_away,
             "market": p_away,
-            "odds": away_o,
-            "pitch": pitch
+            "odds": away_o
         }
 
 
@@ -240,7 +218,7 @@ def analyze(game, pitchers):
 
 def main():
 
-    log("HEDGE FUND v3.1 START")
+    log("STARTING V4 INSTITUTIONAL CORE")
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -250,37 +228,36 @@ def main():
             "apiKey": ODDS_API_KEY,
             "regions": "us",
             "markets": "h2h",
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
+            "oddsFormat": "decimal"
         }
     )
 
     games = r.json()
     pitchers = get_pitchers()
 
-    seen = set()
+    used = set()
 
     for g in games:
 
-        # 🔥 FILTRO REAL DE HOY
+        # filtro simple de hoy (evita basura histórica)
         if today not in g.get("commence_time", ""):
             continue
 
-        res = analyze(g, pitchers)
+        res = analyze(g)
         if not res:
             continue
 
-        if res["game"] in seen:
+        if res["game"] in used:
             continue
-        seen.add(res["game"])
+        used.add(res["game"])
 
-        p = res["pitch"]
-        dq_score = dq(p)
+        pitch = get_pitch(pitchers, *res["game"].split(" vs ")[::-1])
 
-        if dq_score < 40:
+        # filtro institucional de edge
+        if res["edge"] < 0.05:
             continue
 
-        message = f"""🏦 MLB SHARP ALERT (HEDGE FUND v3.1)
+        msg = f"""🏦 MLB HEDGE FUND v4 (INSTITUTIONAL CORE)
 
 ⚾ {res['game']}
 
@@ -292,16 +269,16 @@ def main():
 
 💰 ODDS: {res['odds']}
 
-🔥 PITCHERS:
-- Away: {p['away_name']} ({p['away_era']})
-- Home: {p['home_name']} ({p['home_era']})
+🔥 PITCHERS (VERIFICATION ONLY):
+- Away: {pitch['away_name']} ({pitch['away_era']})
+- Home: {pitch['home_name']} ({pitch['home_era']})
 
-🧠 DATA QUALITY: {dq_score}/100 → {dq_label(dq_score)}
+🧠 MODE: MARKET-DRIVEN (NO NOISE)
 
 ────────────────────
 """
 
-        send_message(message)
+        send_message(msg)
         log(res["game"])
 
 
