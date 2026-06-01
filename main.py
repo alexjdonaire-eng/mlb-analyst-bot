@@ -26,6 +26,7 @@ timeout=20
 
 ```
 print("STATUS:", r.status_code)
+print(r.text)
 ```
 
 def main():
@@ -38,13 +39,21 @@ params = {
     "oddsFormat": "decimal"
 }
 
-games = requests.get(
+response = requests.get(
     URL,
     params=params,
     timeout=30
-).json()
+)
 
-print("JUEGOS:", len(games))
+print("ODDS STATUS:", response.status_code)
+
+games = response.json()
+
+if not isinstance(games, list):
+    print("ERROR API:", games)
+    return
+
+print("JUEGOS ENCONTRADOS:", len(games))
 
 for game in games:
 
@@ -53,25 +62,32 @@ for game in games:
         home = game["home_team"]
         away = game["away_team"]
 
-        if not game.get("bookmakers"):
+        bookmakers = game.get("bookmakers", [])
+
+        if not bookmakers:
             continue
 
-        book = game["bookmakers"][0]
+        book = bookmakers[0]
 
-        outcomes = book["markets"][0]["outcomes"]
+        markets = book.get("markets", [])
+
+        if not markets:
+            continue
+
+        outcomes = markets[0].get("outcomes", [])
 
         home_odds = None
         away_odds = None
 
-        for o in outcomes:
+        for outcome in outcomes:
 
-            if o["name"] == home:
-                home_odds = o["price"]
+            if outcome["name"] == home:
+                home_odds = outcome["price"]
 
-            if o["name"] == away:
-                away_odds = o["price"]
+            if outcome["name"] == away:
+                away_odds = outcome["price"]
 
-        if not home_odds or not away_odds:
+        if home_odds is None or away_odds is None:
             continue
 
         p_home = implied_prob(home_odds)
@@ -84,17 +100,17 @@ for game in games:
 
         favorito = home if p_home > p_away else away
 
-        msg = f"""
+        mensaje = f"""
 ```
 
 🏦 MLB MARKET BOT
 
 ⚾ {away} vs {home}
 
-📊 Mercado
+📊 Probabilidades de mercado
 
-{away}: {round(p_away*100,1)}%
-{home}: {round(p_home*100,1)}%
+{away}: {round(p_away * 100, 1)}%
+{home}: {round(p_home * 100, 1)}%
 
 📌 Favorito:
 {favorito}
@@ -103,13 +119,15 @@ for game in games:
 """
 
 ```
-        send_message(msg)
+        send_message(mensaje)
 
         print("ENVIADO:", away, "vs", home)
 
     except Exception as e:
 
-        print("ERROR:", e)
+        print("ERROR JUEGO:", e)
+
+print("FINALIZADO")
 ```
 
 if **name** == "**main**":
