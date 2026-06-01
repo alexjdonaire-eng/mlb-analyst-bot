@@ -4,8 +4,8 @@ import requests
 # =========================
 # CONFIG
 # =========================
-TOKEN = os.getenv("8916331113:AAF_ffi01DlYqTSVqAJGqiJTVLKnMHzbe70")
-CHAT_ID = os.getenv("5163780989")
+TOKEN = "8916331113:AAF_ffi01DlYqTSVqAJGqiJTVLKnMHzbe70"
+CHAT_ID = "5163780989"
 
 print("🚀 BOT INICIANDO")
 print("TOKEN CARGADO:", TOKEN is not None)
