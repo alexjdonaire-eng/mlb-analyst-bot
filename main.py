@@ -8,37 +8,41 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-PARTIDOS_ENVIADOS = set()
-
-
 # =========================
+
 # TELEGRAM
+
 # =========================
+
 def send_message(text):
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text}
-    )
-
+requests.post(
+f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+json={"chat_id": CHAT_ID, "text": text}
+)
 
 # =========================
+
 # PROBABILIDAD
-# =========================
-def prob(odds):
-    return 1 / odds
 
+# =========================
+
+def prob(odds):
+return 1 / odds
 
 def remove_vig(p1, p2):
-    total = p1 + p2
-    return p1 / total, p2 / total
-
+total = p1 + p2
+return p1 / total, p2 / total
 
 # =========================
-# MODELO BASE MLB (TU EDGE)
+
+# MODELO BASE MLB
+
 # =========================
+
 def modelo_mlb(team_a, team_b):
 
-    ratings = {
+```
+ratings = {
     "Los Angeles Dodgers": 60,
     "New York Yankees": 58,
     "Philadelphia Phillies": 57,
@@ -69,21 +73,25 @@ def modelo_mlb(team_a, team_b):
     "Baltimore Orioles": 43,
     "Colorado Rockies": 40,
     "Chicago White Sox": 38
-    }
+}
 
-    a = ratings.get(team_a, 50)
-    b = ratings.get(team_b, 50)
+a = ratings.get(team_a, 50)
+b = ratings.get(team_b, 50)
 
-    print(team_a, a)
-    print(team_b, b)
+print(team_a, a)
+print(team_b, b)
 
-    total = a + b
+total = a + b
 
-    return a / total, b / total
+return a / total, b / total
+```
 
 # =========================
+
 # MAIN
+
 # =========================
+
 def main():
 
 ```
@@ -164,7 +172,7 @@ for game in games:
     reporte += (
         f"⚾ {away} vs {home}\n"
         f"🎯 Pick: {mejor}\n"
-        f"📈 Edge: {round(edge*100,2)}%\n"
+        f"📈 Edge: {round(edge * 100, 2)}%\n"
         f"🎯 Confianza: {confianza}\n\n"
     )
 
@@ -173,3 +181,8 @@ if reporte != "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n":
 else:
     send_message("❌ No se encontraron picks con valor hoy.")
 ```
+
+print("BOT INICIADO")
+
+if **name** == "**main**":
+main()
