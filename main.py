@@ -11,8 +11,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-MLB_SCHEDULE = "https://statsapi.mlb.com/api/v1/schedule"
-MLB_PLAYER = "https://statsapi.mlb.com/api/v1/people/{id}/stats"
+HIST_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds-history"
 
 
 # =========================
@@ -20,7 +19,7 @@ MLB_PLAYER = "https://statsapi.mlb.com/api/v1/people/{id}/stats"
 # =========================
 
 def log(msg):
-    print(f"[V5] {msg}")
+    print(f"[V6 SHARP] {msg}")
 
 
 # =========================
@@ -57,7 +56,7 @@ def remove_vig(a, b):
 
 
 # =========================
-# TEAM MODEL (BASE)
+# TEAM MODEL
 # =========================
 
 ratings = {
@@ -89,133 +88,59 @@ def model(home, away):
 
 
 # =========================
-# PITCHER ENGINE (REAL STATS)
+# SHARP MONEY ENGINE
 # =========================
 
-pitch_cache = {}
+def sharp_score(open_odds, current_odds):
 
+    """
+    idea:
+    - si odds bajan fuerte → sharp money en ese lado
+    - si suben → posible public fade
+    """
 
-def get_pitcher_stats(player_id):
-
-    if not player_id:
-        return None
-
-    if player_id in pitch_cache:
-        return pitch_cache[player_id]
-
-    try:
-        url = MLB_PLAYER.format(id=player_id) + "?stats=season&group=pitching"
-        data = requests.get(url, timeout=10).json()
-
-        splits = data.get("stats", [])[0].get("splits", [])
-        if not splits:
-            return None
-
-        stats = splits[0]["stat"]
-
-        era = float(stats.get("era", 0))
-        whip = float(stats.get("whip", 0))
-        k9 = float(stats.get("strikeoutsPer9Inn", 0))
-
-        result = {
-            "era": era,
-            "whip": whip,
-            "k9": k9
-        }
-
-        pitch_cache[player_id] = result
-        return result
-
-    except:
-        return None
-
-
-def pitcher_impact(stats):
-
-    if not stats:
+    if not open_odds or not current_odds:
         return 0
 
-    # modelo simple cuant:
-    # ERA alto = negativo
-    # WHIP alto = negativo
-    # K9 alto = positivo
+    movement = open_odds - current_odds
 
-    impact = 0
+    # normalización simple
+    return movement * 10
 
-    impact += (4.00 - stats["era"]) * 2.5
-    impact += (1.30 - stats["whip"]) * 3.0
-    impact += (stats["k9"] - 8.0) * 1.5
 
-    return impact / 10
+def market_pressure(edge, sharp):
+
+    """
+    combina valor del modelo + dinero inteligente
+    """
+
+    return edge + (sharp * 0.3)
 
 
 # =========================
-# PITCHERS FROM MLB
+# ODDS FETCH
 # =========================
 
-def get_pitchers():
+def get_games():
 
-    pitchers = {}
-
-    try:
-        url = MLB_SCHEDULE + f"?sportId=1&date={datetime.utcnow().strftime('%Y-%m-%d')}&hydrate=probablePitcher"
-        data = requests.get(url, timeout=10).json()
-
-        games = data.get("dates", [])[0].get("games", [])
-
-        for g in games:
-
-            home = g["teams"]["home"]["team"]["name"]
-            away = g["teams"]["away"]["team"]["name"]
-
-            def parse(p):
-                if not p:
-                    return None, None
-
-                return p.get("id"), p.get("fullName")
-
-            ap_id, ap_name = parse(g["teams"]["away"].get("probablePitcher"))
-            hp_id, hp_name = parse(g["teams"]["home"].get("probablePitcher"))
-
-            pitchers[(norm(away), norm(home))] = {
-                "away_id": ap_id,
-                "away_name": ap_name or "TBA",
-                "home_id": hp_id,
-                "home_name": hp_name or "TBA"
-            }
-
-    except:
-        pass
-
-    return pitchers
-
-
-def get_pitch(pitchers, away, home):
-
-    return pitchers.get(
-        (norm(away), norm(home)),
-        {
-            "away_id": None,
-            "away_name": "TBA",
-            "home_id": None,
-            "home_name": "TBA"
+    r = requests.get(
+        ODDS_URL,
+        params={
+            "apiKey": ODDS_API_KEY,
+            "regions": "us",
+            "markets": "h2h",
+            "oddsFormat": "decimal"
         }
     )
 
-
-# =========================
-# EDGE ENGINE (TEAM + PITCHER)
-# =========================
-
-def compute_edge(team_p, model_p, pitcher_adj):
-    return (model_p + pitcher_adj) - team_p
+    return r.json()
 
 
 # =========================
-# ANALYSIS
+# ANALYSIS CORE
 # =========================
 
-def analyze(game, pitchers):
+def analyze(game):
 
     home = game["home_team"]
     away = game["away_team"]
@@ -244,39 +169,27 @@ def analyze(game, pitchers):
 
     m_home, m_away = model(home, away)
 
-    pitch = get_pitch(pitchers, away, home)
+    edge_home = m_home - p_home
+    edge_away = m_away - p_away
 
-    away_stats = get_pitcher_stats(pitch["away_id"])
-    home_stats = get_pitcher_stats(pitch["home_id"])
+    pick = home if edge_home > edge_away else away
+    edge = max(edge_home, edge_away)
 
-    away_adj = pitcher_impact(away_stats)
-    home_adj = pitcher_impact(home_stats)
+    # SHARP MONEY (simplificado sin histórico real aún)
+    # (en v7 lo conectamos a odds-history real)
+    sharp = 0
 
-    edge_home = compute_edge(p_home, m_home, home_adj)
-    edge_away = compute_edge(p_away, m_away, away_adj)
+    pressure = market_pressure(edge, sharp)
 
-    if edge_home > edge_away:
-        return {
-            "game": f"{away} vs {home}",
-            "pick": home,
-            "edge": edge_home,
-            "model": m_home,
-            "market": p_home,
-            "odds": home_o,
-            "pitch": pitch,
-            "stats": home_stats
-        }
-    else:
-        return {
-            "game": f"{away} vs {home}",
-            "pick": away,
-            "edge": edge_away,
-            "model": m_away,
-            "market": p_away,
-            "odds": away_o,
-            "pitch": pitch,
-            "stats": away_stats
-        }
+    return {
+        "game": f"{away} vs {home}",
+        "pick": pick,
+        "edge": pressure,
+        "model": m_home if pick == home else m_away,
+        "market": p_home if pick == home else p_away,
+        "odds": home_o if pick == home else away_o,
+        "sharp": sharp
+    }
 
 
 # =========================
@@ -285,26 +198,15 @@ def analyze(game, pitchers):
 
 def main():
 
-    log("START V5 QUANT PITCHER ENGINE")
+    log("START V6 SHARP MONEY ENGINE")
 
-    r = requests.get(
-        ODDS_URL,
-        params={
-            "apiKey": ODDS_API_KEY,
-            "regions": "us",
-            "markets": "h2h",
-            "oddsFormat": "decimal"
-        }
-    )
-
-    games = r.json()
-    pitchers = get_pitchers()
+    games = get_games()
 
     used = set()
 
     for g in games:
 
-        res = analyze(g, pitchers)
+        res = analyze(g)
         if not res:
             continue
 
@@ -312,30 +214,22 @@ def main():
             continue
         used.add(res["game"])
 
-        s = res["stats"]
+        if res["edge"] < 0.05:
+            continue
 
-        msg = f"""🏦 MLB HEDGE FUND v5 (QUANT PITCHER ENGINE)
+        msg = f"""🏦 MLB SHARP MONEY ENGINE v6
 
 ⚾ {res['game']}
 
 🎯 PICK: {res['pick']}
 
-📊 EDGE FINAL: {round(res['edge']*100,2)}%
+📊 EDGE (ADJUSTED): {round(res['edge']*100,2)}%
 📈 MODEL: {round(res['model']*100,2)}%
 📉 MARKET: {round(res['market']*100,2)}%
 
 💰 ODDS: {res['odds']}
 
-🔥 PITCHER ENGINE:
-- Away: {res['pitch']['away_name']}
-- Home: {res['pitch']['home_name']}
-
-📊 PITCHER STATS (IMPACT):
-ERA: {s['era'] if s else 'N/A'}
-WHIP: {s['whip'] if s else 'N/A'}
-K/9: {s['k9'] if s else 'N/A'}
-
-🧠 SYSTEM: TEAM + PITCHER WEIGHTED MODEL
+📡 SHARP SIGNAL: {round(res['sharp'],2)}
 
 ────────────────────
 """
