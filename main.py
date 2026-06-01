@@ -86,103 +86,90 @@ def modelo_mlb(team_a, team_b):
 # =========================
 def main():
 
-    print("EJECUTANDO MAIN")
+```
+print("EJECUTANDO MAIN")
 
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h",
-        "oddsFormat": "decimal"
-    }
+params = {
+    "apiKey": ODDS_API_KEY,
+    "regions": "us",
+    "markets": "h2h",
+    "oddsFormat": "decimal"
+}
 
-    r = requests.get(URL, params=params)
+r = requests.get(URL, params=params)
 
-    if r.status_code != 200:
-        send_message("❌ Error Odds API")
-        return
+if r.status_code != 200:
+    send_message("❌ Error Odds API")
+    return
 
-    games = r.json()
+games = r.json()
 
-    mejor_pick = None
-    mejor_edge = 0
+reporte = "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n"
 
-    for game in games:
+for game in games:
 
-        home = game["home_team"]
-        away = game["away_team"]
+    home = game["home_team"]
+    away = game["away_team"]
 
-        if not game["bookmakers"]:
-            continue
+    if not game["bookmakers"]:
+        continue
 
-        book = game["bookmakers"][0]
-        outcomes = book["markets"][0]["outcomes"]
+    book = game["bookmakers"][0]
+    outcomes = book["markets"][0]["outcomes"]
 
-        home_odds = None
-        away_odds = None
+    home_odds = None
+    away_odds = None
 
-        for o in outcomes:
-            if o["name"] == home:
-                home_odds = o["price"]
+    for o in outcomes:
+        if o["name"] == home:
+            home_odds = o["price"]
 
-            if o["name"] == away:
-                away_odds = o["price"]
+        if o["name"] == away:
+            away_odds = o["price"]
 
-        if not home_odds or not away_odds:
-            continue
+    if not home_odds or not away_odds:
+        continue
 
-        # MERCADO
-        p_home = prob(home_odds)
-        p_away = prob(away_odds)
+    # MERCADO
+    p_home = prob(home_odds)
+    p_away = prob(away_odds)
 
-        p_home, p_away = remove_vig(p_home, p_away)
+    p_home, p_away = remove_vig(p_home, p_away)
 
-        # MODELO
-        m_home, m_away = modelo_mlb(home, away)
+    # MODELO
+    m_home, m_away = modelo_mlb(home, away)
 
-        # EDGE
-        edge_home = m_home - p_home
-        edge_away = m_away - p_away
+    # EDGE
+    edge_home = m_home - p_home
+    edge_away = m_away - p_away
 
-        edge = max(edge_home, edge_away)
+    edge = max(edge_home, edge_away)
 
-        mejor = home if edge_home > edge_away else away
+    mejor = home if edge_home > edge_away else away
 
-        # CONFIANZA
-        if edge >= 0.20:
-            confianza = "🔥 MUY ALTA"
-        elif edge >= 0.15:
-            confianza = "✅ ALTA"
-        elif edge >= 0.10:
-            confianza = "⚠️ MEDIA"
-        else:
-            confianza = "❌ BAJA"
+    # CONFIANZA
+    if edge >= 0.20:
+        confianza = "🔥 MUY ALTA"
+    elif edge >= 0.15:
+        confianza = "✅ ALTA"
+    elif edge >= 0.10:
+        confianza = "⚠️ MEDIA"
+    else:
+        confianza = "❌ BAJA"
 
-        # FILTRO
-        if edge < 0.10:
-            continue
-        msg = (
-            f"⚾ {away} vs {home}\n\n"
-            f"📊 Mercado:\n"
-            f"{away}: {round(p_away*100,2)}%\n"
-            f"{home}: {round(p_home*100,2)}%\n\n"
-            f"🧠 Modelo:\n"
-            f"{away}: {round(m_away*100,2)}%\n"
-            f"{home}: {round(m_home*100,2)}%\n\n"
-            f"📈 Edge: {round(edge*100,2)}%\n"
-            f"🎯 Confianza: {confianza}\n\n"
-            f"📌 Favorito modelo: {mejor}\n"
-        )
+    # FILTRO
+    if edge < 0.10:
+        continue
 
-        if edge > mejor_edge:
-            mejor_edge = edge
-            mejor_pick = msg
+    reporte += (
+        f"⚾ {away} vs {home}\n"
+        f"🎯 Pick: {mejor}\n"
+        f"📈 Edge: {round(edge*100,2)}%\n"
+        f"🎯 Confianza: {confianza}\n\n"
+    )
 
-    if mejor_pick:
-        send_message(
-            "🏆 MEJOR PICK DEL DÍA 🏆\n\n" + mejor_pick
-        )
-
-print("BOT INICIADO")
-
-if __name__ == "__main__":
-    main()
+if reporte != "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n":
+    send_message(reporte)
+else:
+    send_message("❌ No se encontraron picks con valor hoy.")
+```
