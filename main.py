@@ -8,6 +8,8 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
+PARTIDOS_ENVIADOS = set()
+
 
 # =========================
 # TELEGRAM
@@ -164,8 +166,13 @@ def main():
             f"📌 Favorito modelo: {mejor}\n"
         )
 
-        send_message(msg)
+        partido_id = f"{away} vs {home}"
 
+if partido_id not in PARTIDOS_ENVIADOS:
+    send_message(msg)
+    PARTIDOS_ENVIADOS.add(partido_id)
+else:
+    print("Duplicado ignorado:", partido_id)
 
 if __name__ == "__main__":
     main()
