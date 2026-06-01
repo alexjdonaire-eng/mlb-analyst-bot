@@ -1,7 +1,6 @@
 import os
 import requests
 import json
-from datetime import datetime
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -9,18 +8,17 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-# archivo local (Railway lo mantiene mientras esté activo)
-STATE_FILE = "odds_state.json"
+STATE_FILE = "estado.json"
 
 
-def send_message(text):
+def enviar_mensaje(texto):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text}
+        json={"chat_id": CHAT_ID, "text": texto}
     )
 
 
-def load_state():
+def cargar_estado():
     try:
         with open(STATE_FILE, "r") as f:
             return json.load(f)
@@ -28,91 +26,115 @@ def load_state():
         return {}
 
 
-def save_state(state):
+def guardar_estado(estado):
     with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
+        json.dump(estado, f)
 
 
-def implied_prob(odds):
+def probabilidad(odds):
     return 1 / odds
 
 
-def remove_vig(p1, p2):
+def quitar_margen(p1, p2):
     total = p1 + p2
     return p1 / total, p2 / total
 
 
 def main():
 
-    state = load_state()
+    estado = cargar_estado()
 
-    params = {
+    parametros = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
         "markets": "h2h",
         "oddsFormat": "decimal"
     }
 
-    r = requests.get(URL, params=params)
+    respuesta = requests.get(URL, params=parametros)
 
-    if r.status_code != 200:
-        send_message("❌ Error Odds API")
+    if respuesta.status_code != 200:
+        enviar_mensaje("❌ Error conectando a cuotas")
         return
 
-    games = r.json()
+    juegos = respuesta.json()
 
-    report = []
+    for juego in juegos:
 
-    for game in games:
+        equipo_local = juego["home_team"]
+        equipo_visitante = juego["away_team"]
+        id_juego = juego.get("id", equipo_local + "_" + equipo_visitante)
 
-        home = game["home_team"]
-        away = game["away_team"]
-        game_id = game.get("id", f"{home}_vs_{away}")
+        libro = juego["bookmakers"][0]
+        resultados = libro["markets"][0]["outcomes"]
 
-        book = game["bookmakers"][0]
-        outcomes = book["markets"][0]["outcomes"]
+        cuota_local = None
+        cuota_visitante = None
 
-        home_odds = None
-        away_odds = None
+        for r in resultados:
+            if r["name"] == equipo_local:
+                cuota_local = r["price"]
+            if r["name"] == equipo_visitante:
+                cuota_visitante = r["price"]
 
-        for o in outcomes:
-            if o["name"] == home:
-                home_odds = o["price"]
-            if o["name"] == away:
-                away_odds = o["price"]
-
-        if not home_odds or not away_odds:
+        if not cuota_local or not cuota_visitante:
             continue
 
-        # mercado actual
-        p_home = implied_prob(home_odds)
-        p_away = implied_prob(away_odds)
+        p_local = probabilidad(cuota_local)
+        p_visitante = probabilidad(cuota_visitante)
 
-        p_home, p_away = remove_vig(p_home, p_away)
+        p_local, p_visitante = quitar_margen(p_local, p_visitante)
 
-        # guardar open odds si no existe
-        if game_id not in state:
-            state[game_id] = {
-                "open_home": home_odds,
-                "open_away": away_odds
+        favorito = equipo_local if p_local > p_visitante else equipo_visitante
+
+        prob_favorito = max(p_local, p_visitante)
+
+        # guardar apertura
+        if id_juego not in estado:
+            estado[id_juego] = {
+                "apertura_local": cuota_local,
+                "apertura_visitante": cuota_visitante
             }
 
-        open_home = state[game_id]["open_home"]
+        # CLV real
+        apertura = estado[id_juego]["apertura_local"]
+        cierre = cuota_local
 
-        # CLV simple (home side)
-        clv_home = implied_prob(open_home) - p_home
+        clv = (1 / cierre) - (1 / apertura)
 
-        report.append(
-            f"""⚾ {away} vs {home}
-CLV Home: {round(clv_home*100,3)}%
-"""
+        diferencia = abs(p_local - p_visitante)
+
+        # FILTRO DE APUESTA
+        hay_apuesta = (
+            clv > 0.01 and
+            diferencia > 0.03
         )
 
-    save_state(state)
+        if hay_apuesta:
 
-    msg = "🏦 CLV TRACKER MLB\n\n" + "\n".join(report[:10])
+            mensaje = f"""
+🏦 SEÑAL DE APUESTA MLB
 
-    send_message(msg)
+⚾ {equipo_visitante} vs {equipo_local}
+
+📊 Favorito: {favorito}
+
+📈 Probabilidad:
+Local: {round(p_local*100,2)}%
+Visitante: {round(p_visitante*100,2)}%
+
+📊 Mejora de valor (CLV): {round(clv*100,2)}%
+
+🔥 DECISIÓN: APUESTA POSIBLE
+"""
+
+            enviar_mensaje(mensaje)
+
+        else:
+
+            print(f"Sin valor: {equipo_visitante} vs {equipo_local}")
+
+    guardar_estado(estado)
 
 
 if __name__ == "__main__":
