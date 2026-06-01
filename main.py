@@ -74,6 +74,9 @@ def modelo_mlb(team_a, team_b):
     a = ratings.get(team_a, 50)
     b = ratings.get(team_b, 50)
 
+    print(team_a, a)
+    print(team_b, b)
+
     total = a + b
 
     return a / total, b / total
