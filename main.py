@@ -88,22 +88,22 @@ def modelo_mlb(team_a, team_b):
 
 def main():
 
-print("EJECUTANDO MAIN")
+    print("EJECUTANDO MAIN")
 
-params = {
-    "apiKey": ODDS_API_KEY,
-    "regions": "us",
-    "markets": "h2h",
-    "oddsFormat": "decimal"
-}
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "us",
+        "markets": "h2h",
+        "oddsFormat": "decimal"
+    }
 
-r = requests.get(URL, params=params)
+    r = requests.get(URL, params=params)
 
-if r.status_code != 200:
-    send_message("❌ Error Odds API")
-    return
+    if r.status_code != 200:
+        send_message("❌ Error Odds API")
+        return
 
-games = r.json()
+    games = r.json()
 
 reporte = "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n"
 
