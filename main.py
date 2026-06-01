@@ -38,50 +38,48 @@ def remove_vig(p1, p2):
 
 def modelo_mlb(team_a, team_b):
 
-ratings = {
-    "Los Angeles Dodgers": 60,
-    "New York Yankees": 58,
-    "Philadelphia Phillies": 57,
-    "Atlanta Braves": 57,
-    "Houston Astros": 56,
-    "Detroit Tigers": 55,
-    "Minnesota Twins": 54,
-    "Milwaukee Brewers": 54,
-    "Tampa Bay Rays": 53,
-    "San Francisco Giants": 52,
-    "Seattle Mariners": 52,
-    "Arizona Diamondbacks": 52,
-    "San Diego Padres": 52,
-    "Kansas City Royals": 50,
-    "Texas Rangers": 50,
-    "Cleveland Guardians": 50,
-    "Cincinnati Reds": 48,
-    "Los Angeles Angels": 47,
-    "St. Louis Cardinals": 47,
-    "Washington Nationals": 46,
-    "Miami Marlins": 45,
-    "Pittsburgh Pirates": 45,
-    "Athletics": 44,
-    "Toronto Blue Jays": 44,
-    "New York Mets": 44,
-    "Boston Red Sox": 43,
-    "Chicago Cubs": 43,
-    "Baltimore Orioles": 43,
-    "Colorado Rockies": 40,
-    "Chicago White Sox": 38
-}
+    ratings = {
+        "Los Angeles Dodgers": 60,
+        "New York Yankees": 58,
+        "Philadelphia Phillies": 57,
+        "Atlanta Braves": 57,
+        "Houston Astros": 56,
+        "Detroit Tigers": 55,
+        "Minnesota Twins": 54,
+        "Milwaukee Brewers": 54,
+        "Tampa Bay Rays": 53,
+        "San Francisco Giants": 52,
+        "Seattle Mariners": 52,
+        "Arizona Diamondbacks": 52,
+        "San Diego Padres": 52,
+        "Kansas City Royals": 50,
+        "Texas Rangers": 50,
+        "Cleveland Guardians": 50,
+        "Cincinnati Reds": 48,
+        "Los Angeles Angels": 47,
+        "St. Louis Cardinals": 47,
+        "Washington Nationals": 46,
+        "Miami Marlins": 45,
+        "Pittsburgh Pirates": 45,
+        "Athletics": 44,
+        "Toronto Blue Jays": 44,
+        "New York Mets": 44,
+        "Boston Red Sox": 43,
+        "Chicago Cubs": 43,
+        "Baltimore Orioles": 43,
+        "Colorado Rockies": 40,
+        "Chicago White Sox": 38
+    }
 
-a = ratings.get(team_a, 50)
-b = ratings.get(team_b, 50)
+    a = ratings.get(team_a, 50)
+    b = ratings.get(team_b, 50)
 
-print(team_a, a)
-print(team_b, b)
+    print(team_a, a)
+    print(team_b, b)
 
-total = a + b
+    total = a + b
 
-return a / total, b / total
-```
-
+    return a / total, b / total
 # =========================
 
 # MAIN
