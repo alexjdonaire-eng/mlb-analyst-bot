@@ -1,6 +1,5 @@
 import os
 import requests
-import math
 
 # =========================
 # CONFIG
@@ -8,9 +7,9 @@ import math
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 
 # =========================
@@ -19,7 +18,7 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 def send_message(text):
     if not TOKEN or not CHAT_ID:
-        print("Missing Telegram env vars")
+        print("Missing Telegram env variables")
         return
 
     try:
@@ -32,13 +31,11 @@ def send_message(text):
 
 
 # =========================
-# MATH FUNCTIONS
+# DATA UTILS
 # =========================
 
 def prob(odds):
-    if not odds:
-        return 0
-    return 1 / odds
+    return 1 / odds if odds else 0
 
 
 def remove_vig(p1, p2):
@@ -86,50 +83,22 @@ ratings = {
 }
 
 
-def predict(team_a, team_b):
-    a = ratings.get(team_a, 50)
-    b = ratings.get(team_b, 50)
+def predict(home, away):
+    import math
+
+    a = ratings.get(home, 50)
+    b = ratings.get(away, 50)
 
     diff = a - b
 
-    prob_a = 1 / (1 + math.exp(-diff / 10))
-    prob_b = 1 - prob_a
+    p_home = 1 / (1 + math.exp(-diff / 10))
+    p_away = 1 - p_home
 
-    return prob_a, prob_b
-
-
-# =========================
-# DATA FETCH
-# =========================
-
-def get_games():
-    if not ODDS_API_KEY:
-        print("Missing ODDS_API_KEY")
-        return []
-
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h",
-        "oddsFormat": "decimal"
-    }
-
-    try:
-        r = requests.get(URL, params=params, timeout=10)
-
-        if r.status_code != 200:
-            print("Odds API error:", r.status_code)
-            return []
-
-        return r.json()
-
-    except Exception as e:
-        print("API error:", e)
-        return []
+    return p_home, p_away
 
 
 # =========================
-# ANALYSIS
+# ANALYZER
 # =========================
 
 def analyze_game(home, away, home_odds, away_odds):
@@ -151,30 +120,55 @@ def analyze_game(home, away, home_odds, away_odds):
 
 
 # =========================
-# MAIN
+# MAIN BOT
 # =========================
 
 def main():
 
-    print("🚀 MLB BOT RUNNING...")
+    print("🚀 MLB BOT RUNNING")
 
-    games = get_games()
+    if not ODDS_API_KEY:
+        send_message("❌ Missing ODDS_API_KEY")
+        return
+
+    try:
+        r = requests.get(
+            URL,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "h2h",
+                "oddsFormat": "decimal"
+            },
+            timeout=10
+        )
+    except Exception as e:
+        send_message(f"❌ API error: {e}")
+        return
+
+    if r.status_code != 200:
+        send_message("❌ Error fetching odds API")
+        return
+
+    games = r.json()
 
     if not games:
-        send_message("❌ No se encontraron juegos o error API")
+        send_message("❌ No games found today")
         return
 
     reporte = "⚾ MLB PICKS DEL DÍA ⚾\n\n"
-
     picks_count = 0
 
     for game in games:
 
-        if not game.get("bookmakers"):
+        home = game.get("home_team")
+        away = game.get("away_team")
+
+        if not home or not away:
             continue
 
-        home = game["home_team"]
-        away = game["away_team"]
+        if not game.get("bookmakers"):
+            continue
 
         book = game["bookmakers"][0]
 
@@ -190,10 +184,10 @@ def main():
         away_odds = None
 
         for o in outcomes:
-            if o["name"] == home:
-                home_odds = o["price"]
-            if o["name"] == away:
-                away_odds = o["price"]
+            if o.get("name") == home:
+                home_odds = o.get("price")
+            if o.get("name") == away:
+                away_odds = o.get("price")
 
         if not home_odds or not away_odds:
             continue
@@ -205,24 +199,14 @@ def main():
 
         picks_count += 1
 
-        if picks_count > 5:
-            break
-
-        confidence = (
-            "🔥 MUY ALTA" if edge >= 0.20 else
-            "✅ ALTA" if edge >= 0.15 else
-            "⚠️ MEDIA"
-        )
-
         reporte += (
             f"{away} vs {home}\n"
             f"🎯 Pick: {pick}\n"
-            f"📈 Edge: {round(edge*100,2)}%\n"
-            f"📊 Confianza: {confidence}\n\n"
+            f"📈 Edge: {round(edge * 100, 2)}%\n\n"
         )
 
     if picks_count == 0:
-        send_message("❌ No hay picks con valor hoy")
+        send_message("❌ No value picks today")
     else:
         send_message(reporte)
 
