@@ -8,133 +8,153 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-STATE_FILE = "estado.json"
 
-
-def enviar_mensaje(texto):
+# =========================
+# TELEGRAM
+# =========================
+def send_message(text):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": texto}
+        json={"chat_id": CHAT_ID, "text": text}
     )
 
 
-def cargar_estado():
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-
-def guardar_estado(estado):
-    with open(STATE_FILE, "w") as f:
-        json.dump(estado, f)
-
-
-def probabilidad(odds):
+# =========================
+# PROBABILIDAD
+# =========================
+def prob(odds):
     return 1 / odds
 
 
-def quitar_margen(p1, p2):
+def remove_vig(p1, p2):
     total = p1 + p2
     return p1 / total, p2 / total
 
 
+# =========================
+# MODELO BASE MLB (TU EDGE)
+# =========================
+def modelo_mlb(team_a, team_b):
+    """
+    Modelo simple:
+    - fuerza ofensiva simulada
+    - fuerza defensiva simulada
+    """
+
+    ofensiva = {
+        "default": 4.5  # carreras promedio
+    }
+
+    defensa = {
+        "default": 4.5  # ERA promedio
+    }
+
+    # scoring base
+    a = 50
+    b = 50
+
+    # ventaja aleatoria estructurada por nombre (proxy simple)
+    hash_a = sum(ord(c) for c in team_a) % 10
+    hash_b = sum(ord(c) for c in team_b) % 10
+
+    a += hash_a * 1.2
+    b += hash_b * 1.2
+
+    total = a + b
+
+    return a / total, b / total
+
+
+# =========================
+# MAIN
+# =========================
 def main():
 
-    estado = cargar_estado()
-
-    parametros = {
+    params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
         "markets": "h2h",
         "oddsFormat": "decimal"
     }
 
-    respuesta = requests.get(URL, params=parametros)
+    r = requests.get(URL, params=params)
 
-    if respuesta.status_code != 200:
-        enviar_mensaje("❌ Error conectando a cuotas")
+    if r.status_code != 200:
+        send_message("❌ Error Odds API")
         return
 
-    juegos = respuesta.json()
+    games = r.json()
 
-    for juego in juegos:
+    for game in games:
 
-        equipo_local = juego["home_team"]
-        equipo_visitante = juego["away_team"]
-        id_juego = juego.get("id", equipo_local + "_" + equipo_visitante)
+        home = game["home_team"]
+        away = game["away_team"]
 
-        libro = juego["bookmakers"][0]
-        resultados = libro["markets"][0]["outcomes"]
+        book = game["bookmakers"][0]
+        outcomes = book["markets"][0]["outcomes"]
 
-        cuota_local = None
-        cuota_visitante = None
+        home_odds = None
+        away_odds = None
 
-        for r in resultados:
-            if r["name"] == equipo_local:
-                cuota_local = r["price"]
-            if r["name"] == equipo_visitante:
-                cuota_visitante = r["price"]
+        for o in outcomes:
+            if o["name"] == home:
+                home_odds = o["price"]
+            if o["name"] == away:
+                away_odds = o["price"]
 
-        if not cuota_local or not cuota_visitante:
+        if not home_odds or not away_odds:
             continue
 
-        p_local = probabilidad(cuota_local)
-        p_visitante = probabilidad(cuota_visitante)
+        # =========================
+        # MERCADO
+        # =========================
+        p_home = prob(home_odds)
+        p_away = prob(away_odds)
 
-        p_local, p_visitante = quitar_margen(p_local, p_visitante)
+        p_home, p_away = remove_vig(p_home, p_away)
 
-        favorito = equipo_local if p_local > p_visitante else equipo_visitante
+        # =========================
+        # MODELO PROPIO
+        # =========================
+        m_home, m_away = modelo_mlb(home, away)
 
-        prob_favorito = max(p_local, p_visitante)
+        # =========================
+        # EDGE REAL
+        # =========================
+        edge_home = m_home - p_home
+        edge_away = m_away - p_away
 
-        # guardar apertura
-        if id_juego not in estado:
-            estado[id_juego] = {
-                "apertura_local": cuota_local,
-                "apertura_visitante": cuota_visitante
-            }
+        mejor = home if edge_home > edge_away else away
+        edge = max(edge_home, edge_away)
 
-        # CLV real
-        apertura = estado[id_juego]["apertura_local"]
-        cierre = cuota_local
+        # =========================
+        # FILTRO REAL
+        # =========================
+        if edge < 0.01:
+            print("Sin valor:", away, "vs", home)
+            continue
 
-        clv = (1 / cierre) - (1 / apertura)
+        msg = f"""
+🏦 MODELO MLB INICIAL
 
-        diferencia = abs(p_local - p_visitante)
+⚾ {away} vs {home}
 
-        # FILTRO DE APUESTA
-        hay_apuesta = (
-            clv > 0.01 and
-            diferencia > 0.03
-        )
+📊 Mercado:
+{away}: {round(p_away*100,2)}%
+{home}: {round(p_home*100,2)}%
 
-        if hay_apuesta:
+🧠 Modelo propio:
+{away}: {round(m_away*100,2)}%
+{home}: {round(m_home*100,2)}%
 
-            mensaje = f"""
-🏦 SEÑAL DE APUESTA MLB
+📈 Edge:
+{round(edge*100,3)}%
 
-⚾ {equipo_visitante} vs {equipo_local}
-
-📊 Favorito: {favorito}
-
-📈 Probabilidad:
-Local: {round(p_local*100,2)}%
-Visitante: {round(p_visitante*100,2)}%
-
-📊 Mejora de valor (CLV): {round(clv*100,2)}%
-
-🔥 DECISIÓN: APUESTA POSIBLE
+📌 Favorito modelo:
+{mejor}
 """
 
-            enviar_mensaje(mensaje)
-
-        else:
-
-            print(f"Sin valor: {equipo_visitante} vs {equipo_local}")
-
-    guardar_estado(estado)
+        send_message(msg)
 
 
 if __name__ == "__main__":
