@@ -1,49 +1,83 @@
 import os
 import requests
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # =========================
-# CONFIG
+# MLB
 # =========================
-TOKEN = "8916331113:AAF_ffi01DlYqTSVqAJGqiJTVLKnMHzbe70"
-CHAT_ID = "5163780989"
 
-print("🚀 BOT INICIANDO")
-print("TOKEN CARGADO:", TOKEN is not None)
-print("CHAT_ID CARGADO:", CHAT_ID is not None)
-
-# =========================
-# TELEGRAM
-# =========================
-def send_message(text):
-    if not TOKEN:
-        print("❌ Falta TELEGRAM_BOT_TOKEN")
-        return
-
-    if not CHAT_ID:
-        print("❌ Falta TELEGRAM_CHAT_ID")
-        return
-
+def obtener_juegos_mlb():
     try:
-        response = requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": text
-            },
-            timeout=30
-        )
+        url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+        r = requests.get(url, timeout=20)
 
-        print("STATUS:", response.status_code)
-        print("RESPUESTA:", response.text)
+        if r.status_code != 200:
+            return ["No se pudieron obtener los juegos MLB."]
+
+        data = r.json()
+
+        juegos = []
+
+        for fecha in data.get("dates", []):
+            for game in fecha.get("games", []):
+
+                visitante = game["teams"]["away"]["team"]["name"]
+                local = game["teams"]["home"]["team"]["name"]
+
+                juegos.append(
+                    f"⚾ {visitante} vs {local}"
+                )
+
+        if not juegos:
+            juegos.append("No hay juegos MLB programados hoy.")
+
+        return juegos
 
     except Exception as e:
-        print("ERROR:", e)
+        return [f"Error MLB: {e}"]
 
 # =========================
-# TEST
+# COMANDOS
 # =========================
-if __name__ == "__main__":
 
-    send_message(
-        "✅ TEST RAILWAY OK\n\nSi recibes este mensaje, Telegram está conectado correctamente."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Bienvenido al MLB Bot.\n\n"
+        "Comandos disponibles:\n"
+        "/mlb - Juegos MLB del día\n"
+        "/status - Estado del bot"
     )
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✅ Bot activo y funcionando."
+    )
+
+async def mlb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    juegos = obtener_juegos_mlb()
+
+    for juego in juegos:
+        await update.message.reply_text(juego)
+
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    print("🚀 BOT INICIADO")
+
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("mlb", mlb))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
