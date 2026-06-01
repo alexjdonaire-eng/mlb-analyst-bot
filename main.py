@@ -38,7 +38,6 @@ def remove_vig(p1, p2):
 
 def modelo_mlb(team_a, team_b):
 
-```
 ratings = {
     "Los Angeles Dodgers": 60,
     "New York Yankees": 58,
