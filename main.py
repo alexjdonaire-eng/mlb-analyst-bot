@@ -11,7 +11,8 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
+MLB_SCHEDULE = "https://statsapi.mlb.com/api/v1/schedule"
+MLB_PLAYER = "https://statsapi.mlb.com/api/v1/people/{id}/stats"
 
 
 # =========================
@@ -19,7 +20,7 @@ MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 # =========================
 
 def log(msg):
-    print(f"[HEDGE FUND v4] {msg}")
+    print(f"[V5] {msg}")
 
 
 # =========================
@@ -33,30 +34,30 @@ def send_message(text):
             json={"chat_id": CHAT_ID, "text": text}
         )
     except Exception as e:
-        log(f"Telegram error: {e}")
+        log(e)
 
 
 # =========================
 # UTIL
 # =========================
 
-def normalize(x):
+def norm(x):
     return x.lower().replace(" ", "")
 
 
-def prob(odds):
-    return 1 / odds if odds else 0
+def prob(o):
+    return 1 / o if o else 0
 
 
 def remove_vig(a, b):
-    total = a + b
-    if total == 0:
+    t = a + b
+    if t == 0:
         return 0, 0
-    return a / total, b / total
+    return a / t, b / t
 
 
 # =========================
-# MARKET MODEL (CORE ONLY)
+# TEAM MODEL (BASE)
 # =========================
 
 ratings = {
@@ -72,19 +73,15 @@ ratings = {
     "texasrangers": 50,
     "torontobluejays": 44,
     "newyorkmets": 44,
-    "chicagowhitesox": 38,
-    "milwaukeebrewers": 51,
-    "stlouiscardinals": 47
+    "chicagowhitesox": 38
 }
 
 
 def model(home, away):
-    h = ratings.get(normalize(home), 50)
-    a = ratings.get(normalize(away), 50)
+    h = ratings.get(norm(home), 50)
+    a = ratings.get(norm(away), 50)
 
     diff = h - a
-
-    # logistic simplificada (market-neutral base)
     p_home = 1 / (1 + pow(2.71828, -diff / 10))
     p_away = 1 - p_home
 
@@ -92,7 +89,68 @@ def model(home, away):
 
 
 # =========================
-# PITCHERS (VERIFICATION ONLY)
+# PITCHER ENGINE (REAL STATS)
+# =========================
+
+pitch_cache = {}
+
+
+def get_pitcher_stats(player_id):
+
+    if not player_id:
+        return None
+
+    if player_id in pitch_cache:
+        return pitch_cache[player_id]
+
+    try:
+        url = MLB_PLAYER.format(id=player_id) + "?stats=season&group=pitching"
+        data = requests.get(url, timeout=10).json()
+
+        splits = data.get("stats", [])[0].get("splits", [])
+        if not splits:
+            return None
+
+        stats = splits[0]["stat"]
+
+        era = float(stats.get("era", 0))
+        whip = float(stats.get("whip", 0))
+        k9 = float(stats.get("strikeoutsPer9Inn", 0))
+
+        result = {
+            "era": era,
+            "whip": whip,
+            "k9": k9
+        }
+
+        pitch_cache[player_id] = result
+        return result
+
+    except:
+        return None
+
+
+def pitcher_impact(stats):
+
+    if not stats:
+        return 0
+
+    # modelo simple cuant:
+    # ERA alto = negativo
+    # WHIP alto = negativo
+    # K9 alto = positivo
+
+    impact = 0
+
+    impact += (4.00 - stats["era"]) * 2.5
+    impact += (1.30 - stats["whip"]) * 3.0
+    impact += (stats["k9"] - 8.0) * 1.5
+
+    return impact / 10
+
+
+# =========================
+# PITCHERS FROM MLB
 # =========================
 
 def get_pitchers():
@@ -100,7 +158,7 @@ def get_pitchers():
     pitchers = {}
 
     try:
-        url = MLB_URL + f"?sportId=1&date={datetime.utcnow().strftime('%Y-%m-%d')}&hydrate=probablePitcher"
+        url = MLB_SCHEDULE + f"?sportId=1&date={datetime.utcnow().strftime('%Y-%m-%d')}&hydrate=probablePitcher"
         data = requests.get(url, timeout=10).json()
 
         games = data.get("dates", [])[0].get("games", [])
@@ -112,21 +170,18 @@ def get_pitchers():
 
             def parse(p):
                 if not p:
-                    return ("TBA", None)
+                    return None, None
 
-                name = p.get("fullName", "TBA")
-                era = p.get("stats", {}).get("pitching", {}).get("era", None)
+                return p.get("id"), p.get("fullName")
 
-                return (name, era)
+            ap_id, ap_name = parse(g["teams"]["away"].get("probablePitcher"))
+            hp_id, hp_name = parse(g["teams"]["home"].get("probablePitcher"))
 
-            ap = parse(g["teams"]["away"].get("probablePitcher"))
-            hp = parse(g["teams"]["home"].get("probablePitcher"))
-
-            pitchers[(normalize(away), normalize(home))] = {
-                "away_name": ap[0],
-                "away_era": ap[1],
-                "home_name": hp[0],
-                "home_era": hp[1]
+            pitchers[(norm(away), norm(home))] = {
+                "away_id": ap_id,
+                "away_name": ap_name or "TBA",
+                "home_id": hp_id,
+                "home_name": hp_name or "TBA"
             }
 
     except:
@@ -138,29 +193,29 @@ def get_pitchers():
 def get_pitch(pitchers, away, home):
 
     return pitchers.get(
-        (normalize(away), normalize(home)),
+        (norm(away), norm(home)),
         {
+            "away_id": None,
             "away_name": "TBA",
-            "away_era": None,
-            "home_name": "TBA",
-            "home_era": None
+            "home_id": None,
+            "home_name": "TBA"
         }
     )
 
 
 # =========================
-# EDGE ENGINE
+# EDGE ENGINE (TEAM + PITCHER)
 # =========================
 
-def compute_edge(market_prob, model_prob):
-    return model_prob - market_prob
+def compute_edge(team_p, model_p, pitcher_adj):
+    return (model_p + pitcher_adj) - team_p
 
 
 # =========================
-# ANALYZER
+# ANALYSIS
 # =========================
 
-def analyze(game):
+def analyze(game, pitchers):
 
     home = game["home_team"]
     away = game["away_team"]
@@ -189,8 +244,16 @@ def analyze(game):
 
     m_home, m_away = model(home, away)
 
-    edge_home = compute_edge(p_home, m_home)
-    edge_away = compute_edge(p_away, m_away)
+    pitch = get_pitch(pitchers, away, home)
+
+    away_stats = get_pitcher_stats(pitch["away_id"])
+    home_stats = get_pitcher_stats(pitch["home_id"])
+
+    away_adj = pitcher_impact(away_stats)
+    home_adj = pitcher_impact(home_stats)
+
+    edge_home = compute_edge(p_home, m_home, home_adj)
+    edge_away = compute_edge(p_away, m_away, away_adj)
 
     if edge_home > edge_away:
         return {
@@ -199,7 +262,9 @@ def analyze(game):
             "edge": edge_home,
             "model": m_home,
             "market": p_home,
-            "odds": home_o
+            "odds": home_o,
+            "pitch": pitch,
+            "stats": home_stats
         }
     else:
         return {
@@ -208,7 +273,9 @@ def analyze(game):
             "edge": edge_away,
             "model": m_away,
             "market": p_away,
-            "odds": away_o
+            "odds": away_o,
+            "pitch": pitch,
+            "stats": away_stats
         }
 
 
@@ -218,9 +285,7 @@ def analyze(game):
 
 def main():
 
-    log("STARTING V4 INSTITUTIONAL CORE")
-
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    log("START V5 QUANT PITCHER ENGINE")
 
     r = requests.get(
         ODDS_URL,
@@ -239,11 +304,7 @@ def main():
 
     for g in games:
 
-        # filtro simple de hoy (evita basura histórica)
-        if today not in g.get("commence_time", ""):
-            continue
-
-        res = analyze(g)
+        res = analyze(g, pitchers)
         if not res:
             continue
 
@@ -251,29 +312,30 @@ def main():
             continue
         used.add(res["game"])
 
-        pitch = get_pitch(pitchers, *res["game"].split(" vs ")[::-1])
+        s = res["stats"]
 
-        # filtro institucional de edge
-        if res["edge"] < 0.05:
-            continue
-
-        msg = f"""🏦 MLB HEDGE FUND v4 (INSTITUTIONAL CORE)
+        msg = f"""🏦 MLB HEDGE FUND v5 (QUANT PITCHER ENGINE)
 
 ⚾ {res['game']}
 
 🎯 PICK: {res['pick']}
 
-📊 EDGE: {round(res['edge']*100,2)}%
+📊 EDGE FINAL: {round(res['edge']*100,2)}%
 📈 MODEL: {round(res['model']*100,2)}%
 📉 MARKET: {round(res['market']*100,2)}%
 
 💰 ODDS: {res['odds']}
 
-🔥 PITCHERS (VERIFICATION ONLY):
-- Away: {pitch['away_name']} ({pitch['away_era']})
-- Home: {pitch['home_name']} ({pitch['home_era']})
+🔥 PITCHER ENGINE:
+- Away: {res['pitch']['away_name']}
+- Home: {res['pitch']['home_name']}
 
-🧠 MODE: MARKET-DRIVEN (NO NOISE)
+📊 PITCHER STATS (IMPACT):
+ERA: {s['era'] if s else 'N/A'}
+WHIP: {s['whip'] if s else 'N/A'}
+K/9: {s['k9'] if s else 'N/A'}
+
+🧠 SYSTEM: TEAM + PITCHER WEIGHTED MODEL
 
 ────────────────────
 """
