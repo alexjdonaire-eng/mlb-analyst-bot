@@ -3,10 +3,10 @@ import requests
 import time
 
 # =========================
-# CONFIG (SEGURA)
+# CONFIG CORRECTA
 # =========================
-TOKEN = os.getenv("8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_Sew")
-CHAT_ID = os.getenv("5163780989")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 BANKROLL = 1000
 
@@ -19,23 +19,17 @@ def send_message(text):
         print(text)
         return
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": text}
-        )
-    except Exception as e:
-        print("Telegram error:", e)
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={"chat_id": CHAT_ID, "text": text}
+    )
 
 
 # =========================
-# ODDS (SIMULADO - luego API real)
+# ODDS (SIMULADO)
 # =========================
 def get_odds():
-    return {
-        "home_odds": 1.92,
-        "away_odds": 2.05
-    }
+    return {"home_odds": 1.92, "away_odds": 2.05}
 
 
 def implied_prob(odds):
@@ -43,40 +37,10 @@ def implied_prob(odds):
 
 
 # =========================
-# MODELO (BASE)
+# MODELO
 # =========================
 def model():
-    # placeholder del modelo MLB
     return 0.54, 0.46
-
-
-# =========================
-# STEAM DETECTION
-# =========================
-steam_memory = {}
-
-def save_open(game_id, odds):
-    steam_memory[game_id] = {
-        "open": odds,
-        "time": time.time()
-    }
-
-
-def detect_steam(game_id, current_odds):
-    if game_id not in steam_memory:
-        return None
-
-    open_odds = steam_memory[game_id]["open"]
-
-    move = open_odds - current_odds
-    pct = (move / open_odds) * 100
-
-    speed = pct / (time.time() - steam_memory[game_id]["time"] + 1)
-
-    if pct > 3 and speed > 0.25:
-        return True
-
-    return False
 
 
 # =========================
@@ -87,52 +51,27 @@ def clv(model_p, market_p):
 
 
 # =========================
-# KELLY
+# STEAM
 # =========================
-def ev(prob, odds):
-    return (prob * (odds - 1)) - (1 - prob)
+steam_memory = {}
+
+def save_open(game_id, odds):
+    steam_memory[game_id] = {"open": odds, "time": time.time()}
 
 
-def kelly(prob, odds):
-    e = ev(prob, odds)
-    if e <= 0:
-        return 0
-    return e / (odds - 1)
+def detect_steam(game_id, current_odds):
+    if game_id not in steam_memory:
+        return False
 
+    open_odds = steam_memory[game_id]["open"]
+    move = open_odds - current_odds
+    pct = (move / open_odds) * 100
 
-def position_size(bankroll, prob, odds, clv_val, steam_ok):
-
-    k = kelly(prob, odds) * 0.25
-
-    risk = 1.0
-    if clv_val > 0.02:
-        risk += 0.4
-    else:
-        risk -= 0.3
-
-    if steam_ok:
-        risk += 0.4
-    else:
-        risk -= 0.4
-
-    risk = max(0.1, min(risk, 1.5))
-
-    stake = bankroll * k * risk
-
-    max_bet = bankroll * 0.05
-    min_bet = bankroll * 0.002
-
-    if stake > max_bet:
-        stake = max_bet
-
-    if stake < min_bet:
-        return 0
-
-    return round(stake, 2)
+    return pct > 3
 
 
 # =========================
-# BOT PRINCIPAL
+# BOT
 # =========================
 def run():
 
@@ -160,16 +99,10 @@ def run():
 
     bet = clv_val > 0 and steam_ok
 
-    stake = position_size(
-        BANKROLL,
-        model_p,
-        home_odds,
-        clv_val,
-        steam_ok
-    )
+    stake = BANKROLL * 0.01 if bet else 0
 
     msg = f"""
-🏦 MLB FUND BOT v5 🏦
+🏦 MLB BOT FIXED 🏦
 
 ⚾ PICK: {pick}
 
@@ -183,8 +116,6 @@ def run():
 💰 STAKE: ${stake}
 
 🎯 DECISION: {"BET" if bet else "NO BET"}
-
-──────────────────
 """
 
     send_message(msg)
