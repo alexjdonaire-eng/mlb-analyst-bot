@@ -139,13 +139,21 @@ def main():
 
         mejor = home if edge_home > edge_away else away
 
+        print("================================")
+        print(away, "vs", home)
+        print("Mercado Home:", p_home)
+        print("Mercado Away:", p_away)
+        print("Modelo Home:", m_home)
+        print("Modelo Away:", m_away)
+        print("Edge:", edge)
+        print("================================")
+
         # =========================
         # FILTRO
         # =========================
         if edge < 0.01:
             print("Sin valor:", away, "vs", home)
             continue
-
         # =========================
         # MENSAJE
         # =========================
