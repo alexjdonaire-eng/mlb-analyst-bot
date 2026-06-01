@@ -134,8 +134,7 @@ def main():
 {away}: {round(m_away*100,2)}%
 {home}: {round(m_home*100,2)}%
 
-msg = f"""
-🏦 SISTEMA
+msg = f""" 🏦 SISTEMA
 
 📈 Edge:
 {round(edge*100,3)}%
