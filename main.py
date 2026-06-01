@@ -137,12 +137,15 @@ def main():
         msg = (
     f"🏦 SISTEMA\n\n"
     f"⚾ {away} vs {home}\n\n"
+    f"📊 Mercado:\n"
+    f"{away}: {round(p_away*100,2)}%\n"
+    f"{home}: {round(p_home*100,2)}%\n\n"
+    f"🧠 Modelo:\n"
+    f"{away}: {round(m_away*100,2)}%\n"
+    f"{home}: {round(m_home*100,2)}%\n\n"
     f"📈 Edge: {round(edge*100,3)}%\n\n"
     f"📌 Favorito modelo: {mejor}\n"
-)
-
-📌 Favorito modelo:
-{mejor}
+        )
 
         send_message(msg)
 
