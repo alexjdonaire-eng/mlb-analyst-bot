@@ -5,8 +5,8 @@ import time
 # =========================
 # CONFIG CORRECTA
 # =========================
-TOKEN = os.getenv("8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_Sew")
-CHAT_ID = os.getenv("5163780989")
+print(8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_SewN)
+print(5163780989)
 
 BANKROLL = 1000
 
