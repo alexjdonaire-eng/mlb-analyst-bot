@@ -36,23 +36,22 @@ def remove_vig(p1, p2):
 # =========================
 def modelo_mlb(team_a, team_b):
 
-    ratings = {
-        "Los Angeles Dodgers": 58,
-        "New York Yankees": 57,
-        "Philadelphia Phillies": 56,
-        "Detroit Tigers": 54,
-        "Minnesota Twins": 53,
-        "Milwaukee Brewers": 53,
-        "Tampa Bay Rays": 52,
-        "San Francisco Giants": 52,
-        "Kansas City Royals": 51,
-        "Cincinnati Reds": 51,
-        "St. Louis Cardinals": 50,
-        "Arizona Diamondbacks": 50,
-        "Los Angeles Angels": 48,
-        "Colorado Rockies": 42,
-        "Chicago White Sox": 40
-    }
+ratings = {
+    "Los Angeles Dodgers": 60,
+    "New York Yankees": 58,
+    "Philadelphia Phillies": 57,
+    "Detroit Tigers": 55,
+    "Tampa Bay Rays": 53,
+    "Minnesota Twins": 54,
+    "Milwaukee Brewers": 54,
+    "San Francisco Giants": 52,
+    "Kansas City Royals": 50,
+    "Cincinnati Reds": 48,
+    "Los Angeles Angels": 47,
+    "Colorado Rockies": 40,
+    "Chicago White Sox": 38,
+    ...
+}
 
     a = ratings.get(team_a, 50)
     b = ratings.get(team_b, 50)
