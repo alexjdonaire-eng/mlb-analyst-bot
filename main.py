@@ -69,7 +69,6 @@ def modelo_mlb(team_a, team_b):
 # MAIN
 # =========================
 def main():
-def main():
 
     params = {
         "apiKey": ODDS_API_KEY,
