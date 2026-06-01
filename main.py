@@ -85,19 +85,21 @@ def main():
 
     games = r.json()
 
-    for game in games:
+for game in games:
 
     home = game["home_team"]
     away = game["away_team"]
 
     book = game["bookmakers"][0]
     outcomes = book["markets"][0]["outcomes"]
+
     home_odds = None
     away_odds = None
 
     for o in outcomes:
         if o["name"] == home:
             home_odds = o["price"]
+
         if o["name"] == away:
             away_odds = o["price"]
 
