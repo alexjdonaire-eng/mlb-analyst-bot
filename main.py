@@ -1,8 +1,8 @@
 import os
 import requests
 
-TOKEN = os.getenv("8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_Sew")
-CHAT_ID = os.getenv("5163780989")
+TOKEN = "8916331113:AAGR-Uh8mjEIx_TjJhPfIb2FVOcGDJI_Sew"
+CHAT_ID = "5163780989"
 
 print("TOKEN:", bool(TOKEN))
 print("CHAT_ID:", bool(CHAT_ID))
@@ -16,7 +16,7 @@ SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 # -----------------------------
 
 def get_pitcher_stats(player_id):
-try:
+    try:
 url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
 data = requests.get(url, timeout=10).json()
 
