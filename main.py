@@ -85,7 +85,7 @@ def main():
 
     games = r.json()
 
-for game in games:
+    for game in games:
 
     home = game["home_team"]
     away = game["away_team"]
