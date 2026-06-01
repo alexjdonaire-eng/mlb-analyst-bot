@@ -16,7 +16,7 @@ MLB_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date="
 
 
 # =========================
-# LOGS
+# LOGGING
 # =========================
 
 def log(msg):
@@ -38,7 +38,7 @@ def send_message(text):
 
 
 # =========================
-# NORMALIZATION
+# NORMALIZE
 # =========================
 
 def normalize(name):
@@ -46,7 +46,7 @@ def normalize(name):
 
 
 # =========================
-# MODEL (TEAM STRENGTH)
+# RATING MODEL
 # =========================
 
 ratings = {
@@ -93,11 +93,48 @@ def prob(odds):
 
 def remove_vig(p1, p2):
     total = p1 + p2
+    if total == 0:
+        return 0, 0
     return p1 / total, p2 / total
 
 
 # =========================
-# PITCHER ENGINE (INSTITUTIONAL MATCH)
+# DATA QUALITY ENGINE
+# =========================
+
+def data_quality(game, pitch):
+
+    score = 100
+
+    if not game.get("bookmakers"):
+        return 0
+
+    if not game.get("home_team") or not game.get("away_team"):
+        return 0
+
+    # pitchers
+    if not pitch:
+        score -= 40
+    else:
+        if pitch["away_pitcher"] == "TBA":
+            score -= 20
+        if pitch["home_pitcher"] == "TBA":
+            score -= 20
+
+    return max(score, 0)
+
+
+def confidence(score):
+
+    if score >= 80:
+        return "🟢 FULL TRUST"
+    elif score >= 50:
+        return "🟡 PARTIAL TRUST"
+    return "🔴 BLOCKED"
+
+
+# =========================
+# PITCHERS (SAFE MODE)
 # =========================
 
 def get_pitchers():
@@ -109,7 +146,7 @@ def get_pitchers():
     except:
         return {}
 
-    pitcher_map = {}
+    pitchers = {}
 
     try:
         games = data.get("dates", [])[0].get("games", [])
@@ -119,105 +156,126 @@ def get_pitchers():
             home = g["teams"]["home"]["team"]["name"]
             away = g["teams"]["away"]["team"]["name"]
 
-            home_p = g["teams"]["home"].get("probablePitcher", {})
-            away_p = g["teams"]["away"].get("probablePitcher", {})
+            home_p = g["teams"]["home"].get("probablePitcher")
+            away_p = g["teams"]["away"].get("probablePitcher")
 
-            home_name = home_p.get("fullName", "TBD")
-            away_name = away_p.get("fullName", "TBD")
+            def safe(p):
+                if not p:
+                    return "TBA"
+                return p.get("fullName", "TBA")
 
-            home_era = 4.2
-            away_era = 4.2
+            home_name = safe(home_p)
+            away_name = safe(away_p)
 
-            try:
-                home_era = float(home_p.get("stats", [{}])[0]
-                                 .get("splits", [{}])[0]
-                                 .get("stat", {}).get("era", 4.2))
-            except:
-                pass
-
-            try:
-                away_era = float(away_p.get("stats", [{}])[0]
-                                 .get("splits", [{}])[0]
-                                 .get("stat", {}).get("era", 4.2))
-            except:
-                pass
-
-            pitcher_map[(normalize(away), normalize(home))] = {
+            pitchers[(normalize(away), normalize(home))] = {
                 "away_pitcher": away_name,
-                "home_pitcher": home_name,
-                "away_era": away_era,
-                "home_era": home_era
+                "home_pitcher": home_name
             }
 
     except:
         pass
 
-    return pitcher_map
+    return pitchers
 
 
 def find_pitchers(pitchers, away, home):
 
-    key = (normalize(away), normalize(home))
-
-    if key in pitchers:
-        return pitchers[key]
-
-    return {
-        "away_pitcher": "TBD",
-        "home_pitcher": "TBD",
-        "away_era": 4.2,
-        "home_era": 4.2
-    }
+    return pitchers.get(
+        (normalize(away), normalize(home)),
+        {
+            "away_pitcher": "TBA",
+            "home_pitcher": "TBA"
+        }
+    )
 
 
 # =========================
-# SHARP MODEL CORE
+# SHARP MONEY ENGINE
 # =========================
 
-def model(home, away, pitch):
+def sharp_signal(pick, home_odds, away_odds):
+
+    try:
+        if home_odds < away_odds:
+            return "📉 MARKET FAVORING HOME"
+        elif away_odds < home_odds:
+            return "📉 MARKET FAVORING AWAY"
+    except:
+        pass
+
+    return "⚖️ NO CLEAR FLOW"
+
+
+# =========================
+# MODEL
+# =========================
+
+def model(home, away):
 
     h = ratings.get(normalize(home), 50)
     a = ratings.get(normalize(away), 50)
 
-    # team probability
     diff = h - a
-    team_p_home = 1 / (1 + math.exp(-diff / 10))
-    team_p_away = 1 - team_p_home
+    p_home = 1 / (1 + math.exp(-diff / 10))
+    p_away = 1 - p_home
 
-    # pitcher impact (inverse ERA)
-    home_pitch = 1 / (pitch["home_era"] + 1)
-    away_pitch = 1 / (pitch["away_era"] + 1)
-
-    # weighted blend
-    p_home = (team_p_home * 0.65) + (home_pitch * 0.35)
-    p_away = (team_p_away * 0.65) + (away_pitch * 0.35)
-
-    total = p_home + p_away
-    return p_home / total, p_away / total
+    return p_home, p_away
 
 
 # =========================
 # ANALYSIS
 # =========================
 
-def analyze(home, away, home_odds, away_odds, pitchers):
+def analyze(game, pitchers):
+
+    home = game.get("home_team")
+    away = game.get("away_team")
+
+    book = game["bookmakers"][0]
+    outcomes = book["markets"][0]["outcomes"]
+
+    home_odds = away_odds = None
+
+    for o in outcomes:
+        if o["name"] == home:
+            home_odds = o["price"]
+        if o["name"] == away:
+            away_odds = o["price"]
+
+    if not home_odds or not away_odds:
+        return None
 
     p_home = prob(home_odds)
     p_away = prob(away_odds)
-
     p_home, p_away = remove_vig(p_home, p_away)
 
     pitch = find_pitchers(pitchers, away, home)
 
-    m_home, m_away = model(home, away, pitch)
+    m_home, m_away = model(home, away)
 
     edge_home = m_home - p_home
     edge_away = m_away - p_away
 
     if edge_home > edge_away:
-        return home, edge_home, m_home, p_home, pitch
+        return {
+            "game": f"{away} vs {home}",
+            "pick": home,
+            "edge": edge_home,
+            "model": m_home,
+            "market": p_home,
+            "pitch": pitch,
+            "odds": home_odds
+        }
     else:
-        return away, edge_away, m_away, p_away, pitch
+        return {
+            "game": f"{away} vs {home}",
+            "pick": away,
+            "edge": edge_away,
+            "model": m_away,
+            "market": p_away,
+            "pitch": pitch,
+            "odds": away_odds
+        }
 
 
 # =========================
@@ -226,7 +284,7 @@ def analyze(home, away, home_odds, away_odds, pitchers):
 
 def main():
 
-    log("🚀 SHARP INSTITUTIONAL BOT STARTED")
+    log("🏦 MLB QUANT FUND v1 STARTED")
 
     r = requests.get(
         ODDS_URL,
@@ -241,63 +299,37 @@ def main():
     games = r.json()
     pitchers = get_pitchers()
 
-    seen = set()
     results = []
 
     for game in games:
 
-        home = game.get("home_team")
-        away = game.get("away_team")
-
-        if not home or not away:
-            continue
-
-        key = f"{away}_{home}"
-        if key in seen:
-            continue
-        seen.add(key)
-
         if not game.get("bookmakers"):
             continue
 
-        outcomes = game["bookmakers"][0]["markets"][0]["outcomes"]
+        res = analyze(game, pitchers)
 
-        home_odds = away_odds = None
-
-        for o in outcomes:
-            if o["name"] == home:
-                home_odds = o["price"]
-            if o["name"] == away:
-                away_odds = o["price"]
-
-        if not home_odds or not away_odds:
+        if not res:
             continue
 
-        pick, edge, model_p, market_p, pitch = analyze(
-            home, away, home_odds, away_odds, pitchers
-        )
+        dq = data_quality(game, res["pitch"])
+
+        if dq < 50:
+            continue
 
         results.append({
-            "game": f"{away} vs {home}",
-            "pick": pick,
-            "edge": edge,
-            "model": model_p,
-            "market": market_p,
-            "pitch": pitch
+            **res,
+            "dq": dq
         })
 
     results.sort(key=lambda x: x["edge"], reverse=True)
 
-    log(f"📊 PICKS FOUND: {len(results)}")
+    log(f"PICKS FOUND: {len(results)}")
 
     for r in results[:5]:
 
-        if r["edge"] < 0.06:
-            continue
+        pitch = r["pitch"]
 
-        p = r["pitch"]
-
-        message = f"""🏦 MLB SHARP INSTITUTIONAL ALERT
+        message = f"""🏦 MLB QUANT FUND v1
 
 {r['game']}
 
@@ -306,10 +338,12 @@ def main():
 📈 MODEL: {round(r['model']*100,2)}%
 📉 MARKET: {round(r['market']*100,2)}
 
-🔥 PITCHERS:
-{p['away_pitcher']} ({p['away_era']}) vs {p['home_pitcher']} ({p['home_era']})
+🔥 ODDS: {r['odds']}
+🔥 PITCHERS: {pitch['away_pitcher']} vs {pitch['home_pitcher']}
 
-🧠 SHARP LEVEL: INSTITUTIONAL
+🧪 DATA QUALITY: {r['dq']}/100 → {confidence(r['dq'])}
+⚡ SHARP SIGNAL: {sharp_signal(r['pick'], r['model'], r['market'])}
+
 🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
 """
 
