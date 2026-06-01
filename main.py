@@ -81,10 +81,16 @@ def main():
 
     games = r.json()
 
+    mejor_pick = None
+    mejor_edge = 0
+
     for game in games:
 
         home = game["home_team"]
         away = game["away_team"]
+
+        if not game["bookmakers"]:
+            continue
 
         book = game["bookmakers"][0]
         outcomes = book["markets"][0]["outcomes"]
@@ -102,59 +108,38 @@ def main():
         if not home_odds or not away_odds:
             continue
 
-        # =========================
         # MERCADO
-        # =========================
         p_home = prob(home_odds)
         p_away = prob(away_odds)
 
         p_home, p_away = remove_vig(p_home, p_away)
 
-        # =========================
         # MODELO
-        # =========================
         m_home, m_away = modelo_mlb(home, away)
 
-        # =========================
-        # SEGURIDAD
-        # =========================
-        m_home = min(max(m_home, 0), 1)
-        m_away = min(max(m_away, 0), 1)
-
-        p_home = min(max(p_home, 0), 1)
-        p_away = min(max(p_away, 0), 1)
-
-        # =========================
         # EDGE
-        # =========================
         edge_home = m_home - p_home
         edge_away = m_away - p_away
 
         edge = max(edge_home, edge_away)
-        edge = max(min(edge, 1), -1)
 
         mejor = home if edge_home > edge_away else away
 
-        print("================================")
-        print(away, "vs", home)
-        print("Mercado Home:", p_home)
-        print("Mercado Away:", p_away)
-        print("Modelo Home:", m_home)
-        print("Modelo Away:", m_away)
-        print("Edge:", edge)
-        print("================================")
+        # CONFIANZA
+        if edge >= 0.20:
+            confianza = "🔥 MUY ALTA"
+        elif edge >= 0.15:
+            confianza = "✅ ALTA"
+        elif edge >= 0.10:
+            confianza = "⚠️ MEDIA"
+        else:
+            confianza = "❌ BAJA"
 
-        # =========================
         # FILTRO
-        # =========================
         if edge < 0.13:
-            print("Sin valor:", away, "vs", home)
             continue
-        # =========================
-        # MENSAJE
-        # =========================
+
         msg = (
-            f"🏦 SISTEMA\n\n"
             f"⚾ {away} vs {home}\n\n"
             f"📊 Mercado:\n"
             f"{away}: {round(p_away*100,2)}%\n"
@@ -162,17 +147,19 @@ def main():
             f"🧠 Modelo:\n"
             f"{away}: {round(m_away*100,2)}%\n"
             f"{home}: {round(m_home*100,2)}%\n\n"
-            f"📈 Edge: {round(edge*100,3)}%\n\n"
+            f"📈 Edge: {round(edge*100,2)}%\n"
+            f"🎯 Confianza: {confianza}\n\n"
             f"📌 Favorito modelo: {mejor}\n"
         )
 
-        partido_id = f"{away} vs {home}"
+        if edge > mejor_edge:
+            mejor_edge = edge
+            mejor_pick = msg
 
-        if partido_id not in PARTIDOS_ENVIADOS:
-            send_message(msg)
-            PARTIDOS_ENVIADOS.add(partido_id)
-        else:
-            print("Duplicado ignorado:", partido_id)
+    if mejor_pick:
+        send_message(
+            "🏆 MEJOR PICK DEL DÍA 🏆\n\n" + mejor_pick
+        )
 
 
 if __name__ == "__main__":
