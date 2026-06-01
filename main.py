@@ -137,8 +137,9 @@ def main():
         msg = (
     f"🏦 SISTEMA\n\n"
     f"⚾ {away} vs {home}\n\n"
-    f"📈 Edge: {round(edge*100,3)}%\n"
-        )
+    f"📈 Edge: {round(edge*100,3)}%\n\n"
+    f"📌 Favorito modelo: {mejor}\n"
+)
 
 📌 Favorito modelo:
 {mejor}
