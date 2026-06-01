@@ -168,11 +168,12 @@ def main():
 
         partido_id = f"{away} vs {home}"
 
-if partido_id not in PARTIDOS_ENVIADOS:
-    send_message(msg)
-    PARTIDOS_ENVIADOS.add(partido_id)
-else:
-    print("Duplicado ignorado:", partido_id)
+        if partido_id not in PARTIDOS_ENVIADOS:
+            send_message(msg)
+            PARTIDOS_ENVIADOS.add(partido_id)
+        else:
+            print("Duplicado ignorado:", partido_id)
+
 
 if __name__ == "__main__":
     main()
