@@ -92,7 +92,6 @@ def main():
 
     book = game["bookmakers"][0]
     outcomes = book["markets"][0]["outcomes"]
-
     home_odds = None
     away_odds = None
 
