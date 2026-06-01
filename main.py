@@ -161,6 +161,7 @@ def main():
             "🏆 MEJOR PICK DEL DÍA 🏆\n\n" + mejor_pick
         )
 
+print("BOT INICIADO")
 
 if __name__ == "__main__":
     main()
