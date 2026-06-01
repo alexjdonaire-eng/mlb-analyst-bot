@@ -121,7 +121,7 @@ def main():
         # =========================
         # EDGE REAL
         # =========================
-        # seguridad de rangos
+ # seguridad de rangos
 m_home = min(max(m_home, 0), 1)
 m_away = min(max(m_away, 0), 1)
 
