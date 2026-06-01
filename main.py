@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -15,12 +15,16 @@ MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 
 
 # =========================
-# UTILIDADES
+# LOG
 # =========================
 
 def log(msg):
     print(f"[LOG] {msg}")
 
+
+# =========================
+# TELEGRAM
+# =========================
 
 def send_message(text):
     try:
@@ -28,26 +32,24 @@ def send_message(text):
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text}
         )
-    except Exception as e:
-        log(e)
+    except:
+        pass
 
+
+# =========================
+# NORMALIZE
+# =========================
 
 def normalize(x):
     return x.lower().replace(" ", "")
 
 
-def now_caracas():
-    utc = datetime.now(timezone.utc)
-    caracas = utc - timedelta(hours=4)
-    return caracas.strftime("%Y-%m-%d %H:%M")
-
-
 # =========================
-# PROBABILIDADES
+# PROBABILIDAD
 # =========================
 
-def prob(odds):
-    return 1 / odds if odds else 0
+def prob(o):
+    return 1 / o if o else 0
 
 
 def remove_vig(a, b):
@@ -84,21 +86,20 @@ def model(home, away):
 
     diff = h - a
 
-    p_home = 1 / (1 + pow(2.71828, -diff / 10))
+    p_home = 1 / (1 + (2.71828 ** (-diff / 10)))
     p_away = 1 - p_home
 
     return p_home, p_away
 
 
 # =========================
-# PITCHERS (MLB + ESPN FUSION SAFE)
+# PITCHERS + ERA REAL
 # =========================
 
 def get_pitchers():
 
     pitchers = {}
 
-    # --- MLB API ---
     try:
         url = MLB_URL + f"?sportId=1&date={datetime.utcnow().strftime('%Y-%m-%d')}&hydrate=probablePitcher"
         data = requests.get(url, timeout=10).json()
@@ -106,55 +107,29 @@ def get_pitchers():
         games = data.get("dates", [])[0].get("games", [])
 
         for g in games:
+
             home = g["teams"]["home"]["team"]["name"]
             away = g["teams"]["away"]["team"]["name"]
 
-            hp = g["teams"]["home"].get("probablePitcher")
-            ap = g["teams"]["away"].get("probablePitcher")
+            def extract(p):
+                if not p:
+                    return ("TBA", None)
+
+                name = p.get("fullName", "TBA")
+                era = p.get("stats", {}).get("pitching", {}).get("era", None)
+
+                return (name, era)
+
+            ap = extract(g["teams"]["away"].get("probablePitcher"))
+            hp = extract(g["teams"]["home"].get("probablePitcher"))
 
             pitchers[(normalize(away), normalize(home))] = {
-                "away": ap["fullName"] if ap else "TBA",
-                "home": hp["fullName"] if hp else "TBA",
+                "away_name": ap[0],
+                "away_era": ap[1],
+                "home_name": hp[0],
+                "home_era": hp[1],
                 "source": "MLB"
             }
-
-    except:
-        pass
-
-    # --- ESPN fallback ---
-    try:
-        url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-        data = requests.get(url, timeout=10).json()
-
-        for e in data.get("events", []):
-            c = e["competitions"][0]["competitors"]
-
-            home = away = None
-            home_p = away_p = "TBA"
-
-            for t in c:
-
-                team = t["team"]["displayName"]
-                prob = t.get("probables", [])
-
-                pname = prob[0]["athlete"]["displayName"] if prob else "TBA"
-
-                if t["homeAway"] == "home":
-                    home = team
-                    home_p = pname
-                else:
-                    away = team
-                    away_p = pname
-
-            if home and away:
-                key = (normalize(away), normalize(home))
-
-                if key not in pitchers or "TBA" in pitchers.get(key, {}).get("away", "TBA"):
-                    pitchers[key] = {
-                        "away": away_p,
-                        "home": home_p,
-                        "source": "ESPN"
-                    }
 
     except:
         pass
@@ -163,38 +138,44 @@ def get_pitchers():
 
 
 def get_pitch(pitchers, away, home):
+
     return pitchers.get(
         (normalize(away), normalize(home)),
-        {"away": "TBA", "home": "TBA", "source": "NONE"}
+        {
+            "away_name": "TBA",
+            "away_era": None,
+            "home_name": "TBA",
+            "home_era": None,
+            "source": "NONE"
+        }
     )
 
 
 # =========================
-# DATA QUALITY (SIMPLIFICADO)
+# DATA QUALITY
 # =========================
 
-def dq(pitch):
+def dq(p):
     score = 100
 
-    if pitch["away"] == "TBA":
+    if p["away_name"] == "TBA":
         score -= 30
-    if pitch["home"] == "TBA":
+    if p["home_name"] == "TBA":
         score -= 30
 
     return max(score, 0)
 
 
-def dq_label(score):
-
-    if score >= 80:
+def dq_label(s):
+    if s >= 80:
         return "🟢 CONFIABLE"
-    if score >= 50:
+    if s >= 50:
         return "🟡 PARCIAL"
-    return "🔴 BAJA CONFIANZA"
+    return "🔴 BAJA"
 
 
 # =========================
-# ANALISIS
+# ANALYSIS
 # =========================
 
 def analyze(game, pitchers):
@@ -202,12 +183,15 @@ def analyze(game, pitchers):
     home = game["home_team"]
     away = game["away_team"]
 
+    if not game.get("bookmakers"):
+        return None
+
     book = game["bookmakers"][0]
-    out = book["markets"][0]["outcomes"]
+    outs = book["markets"][0]["outcomes"]
 
     home_o = away_o = None
 
-    for o in out:
+    for o in outs:
         if o["name"] == home:
             home_o = o["price"]
         if o["name"] == away:
@@ -256,7 +240,9 @@ def analyze(game, pitchers):
 
 def main():
 
-    print("🏦 MLB HEDGE FUND v3 STARTED")
+    log("HEDGE FUND v3.1 START")
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
 
     r = requests.get(
         ODDS_URL,
@@ -264,62 +250,59 @@ def main():
             "apiKey": ODDS_API_KEY,
             "regions": "us",
             "markets": "h2h",
-            "oddsFormat": "decimal"
+            "oddsFormat": "decimal",
+            "dateFormat": "iso"
         }
     )
 
     games = r.json()
     pitchers = get_pitchers()
 
-    used = set()
+    seen = set()
 
     for g in games:
 
-        if not g.get("bookmakers"):
+        # 🔥 FILTRO REAL DE HOY
+        if today not in g.get("commence_time", ""):
             continue
 
         res = analyze(g, pitchers)
         if not res:
             continue
 
-        key = res["game"]
-        if key in used:
+        if res["game"] in seen:
             continue
-        used.add(key)
+        seen.add(res["game"])
 
-        pitch = res["pitch"]
-
-        dq_score = dq(pitch)
+        p = res["pitch"]
+        dq_score = dq(p)
 
         if dq_score < 40:
             continue
 
-        message = f"""🏦 MLB SHARP ALERT (HEDGE FUND v3)
+        message = f"""🏦 MLB SHARP ALERT (HEDGE FUND v3.1)
 
-⚾ Partido: {res['game']}
+⚾ {res['game']}
 
-🎯 Pick del modelo: {res['pick']}
+🎯 PICK: {res['pick']}
 
-📊 Edge (ventaja real): {round(res['edge']*100,2)}%
-📈 Modelo (probabilidad): {round(res['model']*100,2)}%
-📉 Mercado (bookmaker): {round(res['market']*100,2)}%
+📊 EDGE: {round(res['edge']*100,2)}%
+📈 MODEL: {round(res['model']*100,2)}%
+📉 MARKET: {round(res['market']*100,2)}%
 
-💰 Cuota: {res['odds']}
+💰 ODDS: {res['odds']}
 
-🔥 Pitchers:
-- Local: {pitch['away']}
-- Visitante: {pitch['home']}
-📡 Fuente: {pitch['source']}
+🔥 PITCHERS:
+- Away: {p['away_name']} ({p['away_era']})
+- Home: {p['home_name']} ({p['home_era']})
 
-🧠 Calidad del dato: {dq_score}/100 → {dq_label(dq_score)}
-
-🕒 Hora Caracas: {now_caracas()}
+🧠 DATA QUALITY: {dq_score}/100 → {dq_label(dq_score)}
 
 ────────────────────
 """
 
         send_message(message)
-        print("sent:", res["game"])
+        log(res["game"])
 
 
 if __name__ == "__main__":
