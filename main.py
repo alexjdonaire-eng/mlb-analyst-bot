@@ -1,5 +1,7 @@
 import os
 import requests
+import time
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -13,25 +15,34 @@ URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 
 # =========================
+# LOG SYSTEM (TRADING STYLE)
+# =========================
+
+def log(msg):
+    print(f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+
+
+# =========================
 # TELEGRAM
 # =========================
 
 def send_message(text):
     if not TOKEN or not CHAT_ID:
-        print("Missing Telegram env variables")
+        log("❌ Missing Telegram env variables")
         return
 
     try:
-        requests.post(
+        r = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text}
         )
+        log(f"📩 Telegram status: {r.status_code}")
     except Exception as e:
-        print("Telegram error:", e)
+        log(f"❌ Telegram error: {e}")
 
 
 # =========================
-# DATA UTILS
+# MATH
 # =========================
 
 def prob(odds):
@@ -46,7 +57,7 @@ def remove_vig(p1, p2):
 
 
 # =========================
-# MLB MODEL (ELO SIMPLE)
+# MODEL
 # =========================
 
 ratings = {
@@ -98,7 +109,7 @@ def predict(home, away):
 
 
 # =========================
-# ANALYZER
+# ANALYSIS ENGINE
 # =========================
 
 def analyze_game(home, away, home_odds, away_odds):
@@ -114,22 +125,28 @@ def analyze_game(home, away, home_odds, away_odds):
     edge_away = m_away - p_away
 
     if edge_home > edge_away:
-        return home, edge_home
+        return home, edge_home, edge_home
     else:
-        return away, edge_away
+        return away, edge_away, edge_home
 
 
 # =========================
-# MAIN BOT
+# MAIN ENGINE (TRADING LOOP)
 # =========================
 
 def main():
 
-    print("🚀 MLB BOT RUNNING")
+    log("🚀 MLB BOT STARTED")
 
     if not ODDS_API_KEY:
+        log("❌ Missing ODDS_API_KEY")
         send_message("❌ Missing ODDS_API_KEY")
         return
+
+    # -------------------------
+    # FETCH ODDS
+    # -------------------------
+    log("📡 Fetching MLB odds...")
 
     try:
         r = requests.get(
@@ -143,41 +160,50 @@ def main():
             timeout=10
         )
     except Exception as e:
-        send_message(f"❌ API error: {e}")
+        log(f"❌ API request error: {e}")
         return
 
+    log(f"📊 API Status Code: {r.status_code}")
+
     if r.status_code != 200:
-        send_message("❌ Error fetching odds API")
+        log(f"❌ API Error Response: {r.text}")
+        send_message("❌ Odds API error")
         return
 
     games = r.json()
 
+    log(f"📦 Games received: {len(games)}")
+
     if not games:
-        send_message("❌ No games found today")
+        send_message("❌ No MLB games found")
         return
 
-    reporte = "⚾ MLB PICKS DEL DÍA ⚾\n\n"
-    picks_count = 0
+    # -------------------------
+    # ANALYSIS
+    # -------------------------
+    picks = []
 
-    for game in games:
+    for i, game in enumerate(games):
 
         home = game.get("home_team")
         away = game.get("away_team")
 
-        if not home or not away:
-            continue
+        log(f"⚾ Game {i+1}: {away} vs {home}")
 
         if not game.get("bookmakers"):
+            log("⚠️ No bookmakers")
             continue
 
         book = game["bookmakers"][0]
 
         if not book.get("markets"):
+            log("⚠️ No markets")
             continue
 
         outcomes = book["markets"][0].get("outcomes", [])
 
         if not outcomes:
+            log("⚠️ No outcomes")
             continue
 
         home_odds = None
@@ -190,26 +216,51 @@ def main():
                 away_odds = o.get("price")
 
         if not home_odds or not away_odds:
+            log("⚠️ Missing odds")
             continue
 
-        pick, edge = analyze_game(home, away, home_odds, away_odds)
+        pick, edge, raw_edge = analyze_game(home, away, home_odds, away_odds)
+
+        log(f"📈 Edge calculated: {round(edge*100,2)}%")
 
         if edge < 0.10:
+            log("❌ Edge too low (skipped)")
             continue
 
-        picks_count += 1
+        picks.append({
+            "match": f"{away} vs {home}",
+            "pick": pick,
+            "edge": edge
+        })
 
-        reporte += (
-            f"{away} vs {home}\n"
-            f"🎯 Pick: {pick}\n"
-            f"📈 Edge: {round(edge * 100, 2)}%\n\n"
+    # -------------------------
+    # OUTPUT
+    # -------------------------
+    log(f"🏁 Total valid picks: {len(picks)}")
+
+    if not picks:
+        send_message("❌ No value picks found today")
+        return
+
+    # sort like trading system
+    picks.sort(key=lambda x: x["edge"], reverse=True)
+
+    report = "⚾ MLB TRADING PICKS ⚾\n\n"
+
+    for p in picks:
+        report += (
+            f"{p['match']}\n"
+            f"🎯 Pick: {p['pick']}\n"
+            f"📈 Edge: {round(p['edge']*100,2)}%\n\n"
         )
 
-    if picks_count == 0:
-        send_message("❌ No value picks today")
-    else:
-        send_message(reporte)
+    send_message(report)
+    log("📩 Report sent to Telegram")
 
+
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
     main()
