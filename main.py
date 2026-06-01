@@ -1,24 +1,20 @@
-import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ El bot está funcionando")
-
 def main():
 
     print("🚀 INICIANDO BOT")
     print("TOKEN CARGADO:", bool(TOKEN))
 
-    app = Application.builder().token(TOKEN).build()
+    try:
+        print("PASO 1")
 
-    app.add_handler(CommandHandler("start", start))
+        app = Application.builder().token(TOKEN).build()
 
-    print("✅ BOT LISTO")
+        print("PASO 2")
 
-    app.run_polling()
+        app.add_handler(CommandHandler("start", start))
 
-if __name__ == "__main__":
-    main()
+        print("PASO 3")
+
+        app.run_polling()
+
+    except Exception as e:
+        print("ERROR:", repr(e))
