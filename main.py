@@ -1,38 +1,11 @@
 import os
-import json
 import requests
+import json
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
-WEIGHTS_FILE = "mlb_weights.json"
-
-
-# -----------------------------
-# PESOS AUTO-OPTIMIZABLES
-# -----------------------------
-DEFAULT_WEIGHTS = {
-    "era": 9.0,
-    "whip": 6.0,
-    "offense": 7.0
-}
-
-
-def load_weights():
-    try:
-        with open(WEIGHTS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return DEFAULT_WEIGHTS.copy()
-
-
-def save_weights(weights):
-    with open(WEIGHTS_FILE, "w") as f:
-        json.dump(weights, f)
-
-
-weights = load_weights()
 
 
 # -----------------------------
@@ -76,47 +49,42 @@ def get_probable_pitchers(game_pk):
         return None
 
 
-# -----------------------------
-# STATS PITCHER
-# -----------------------------
-def enrich_pitchers(pitchers):
-    away_era, away_whip = (None, None)
-    home_era, home_whip = (None, None)
+def enrich_pitchers(p):
+    if not p:
+        return None
 
-    if pitchers["away"]["id"]:
-        away_era, away_whip = get_pitcher_stats(pitchers["away"]["id"])
+    a_id = p["away"]["id"]
+    h_id = p["home"]["id"]
 
-    if pitchers["home"]["id"]:
-        home_era, home_whip = get_pitcher_stats(pitchers["home"]["id"])
+    if a_id:
+        p["away"]["era"], p["away"]["whip"] = get_pitcher_stats(a_id)
+    else:
+        p["away"]["era"], p["away"]["whip"] = None, None
 
-    pitchers["away"]["era"] = away_era
-    pitchers["away"]["whip"] = away_whip
+    if h_id:
+        p["home"]["era"], p["home"]["whip"] = get_pitcher_stats(h_id)
+    else:
+        p["home"]["era"], p["home"]["whip"] = None, None
 
-    pitchers["home"]["era"] = home_era
-    pitchers["home"]["whip"] = home_whip
-
-    return pitchers
+    return p
 
 
 # -----------------------------
-# TEAM DATA
+# TEAM OFFENSE
 # -----------------------------
-def get_team_data():
+def get_offense():
     try:
         url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
         data = requests.get(url, timeout=10).json()
 
         teams = {}
 
-        for record in data.get("records", []):
-            for t in record.get("teamRecords", []):
+        for r in data.get("records", []):
+            for t in r.get("teamRecords", []):
                 name = t["team"]["name"]
-
                 runs = float(t.get("runsScored", 0))
                 games = float(t.get("gamesPlayed", 1))
-                rpg = runs / games
-
-                teams[name] = {"rpg": rpg}
+                teams[name] = runs / games
 
         return teams
 
@@ -125,9 +93,9 @@ def get_team_data():
 
 
 # -----------------------------
-# MODELO BASE
+# MODELO INSTITUCIONAL
 # -----------------------------
-def model(away, home, teams):
+def model(away, home, offense, away_team, home_team):
     a = 50
     h = 50
 
@@ -135,60 +103,46 @@ def model(away, home, teams):
 
         if away["era"] and home["era"]:
             diff = float(home["era"]) - float(away["era"])
-            a += diff * weights["era"]
-            h -= diff * weights["era"]
+            a += diff * 9
+            h -= diff * 9
 
         if away["whip"] and home["whip"]:
             diff = float(home["whip"]) - float(away["whip"])
-            a += diff * weights["whip"]
-            h -= diff * weights["whip"]
+            a += diff * 6
+            h -= diff * 6
 
-        away_team = teams.get("away")
-        home_team = teams.get("home")
-
-        if away_team and home_team:
-            diff = away_team["rpg"] - home_team["rpg"]
-            a += diff * weights["offense"]
-            h -= diff * weights["offense"]
+    if away_team in offense and home_team in offense:
+        diff = offense[away_team] - offense[home_team]
+        a += diff * 7
+        h -= diff * 7
 
     total = a + h
 
-    return (a / total) * 100, (h / total) * 100
+    return round((a / total) * 100, 1), round((h / total) * 100, 1)
 
 
 # -----------------------------
-# CLASIFICACIÓN (LENGUAJE HUMANO)
+# EDGE REAL
 # -----------------------------
-def classify(diff):
+def edge(diff):
     if diff >= 15:
-        return "🟢 Recomendación Alta (Valor fuerte)", 3
+        return "🟢 Fuerte ventaja"
     elif diff >= 9:
-        return "🟡 Recomendación Media (Valor moderado)", 2
-    elif diff >= 6:
-        return "⚪ Recomendación Baja (riesgo alto)", 1
-    return "⚪ Sin valor suficiente (evitar)", 0
+        return "🟡 Ventaja moderada"
+    return "⚪ Sin ventaja clara"
 
 
 # -----------------------------
-# AUTO-OPTIMIZACIÓN SIMPLE
+# STAKE SIMPLE (HUMANO)
 # -----------------------------
-def update_weights(diff):
-    # ajuste leve tipo learning rate
-    lr = 0.05
-
-    if diff >= 12:
-        weights["era"] += lr
-        weights["whip"] += lr / 2
-        weights["offense"] += lr / 2
-    else:
-        weights["era"] -= lr / 2
-        weights["whip"] -= lr / 2
-
-    # clamp
-    for k in weights:
-        weights[k] = max(3, min(15, weights[k]))
-
-    save_weights(weights)
+def stake(diff):
+    if diff >= 15:
+        return "💰💰💰 Alta confianza (riesgo bajo)"
+    elif diff >= 10:
+        return "💰💰 Confianza media"
+    elif diff >= 8:
+        return "💰 Confianza baja"
+    return None
 
 
 # -----------------------------
@@ -212,51 +166,48 @@ def fmt(p):
 # -----------------------------
 def main():
     data = requests.get(SCHEDULE_URL, timeout=10).json()
-    teams = get_team_data()
+    offense = get_offense()
 
-    for game in data.get("dates", [])[0].get("games", []):
+    games = data.get("dates", [])
+    if not games:
+        return
 
-        pk = game["gamePk"]
+    for g in games[0].get("games", []):
 
-        away_name = game["teams"]["away"]["team"]["name"]
-        home_name = game["teams"]["home"]["team"]["name"]
+        pk = g["gamePk"]
 
-        pitchers = get_probable_pitchers(pk)
-        pitchers = enrich_pitchers(pitchers)
+        away_team = g["teams"]["away"]["team"]["name"]
+        home_team = g["teams"]["home"]["team"]["name"]
+
+        pitchers = enrich_pitchers(get_probable_pitchers(pk))
+
+        if not pitchers:
+            continue
 
         away = pitchers["away"]
         home = pitchers["home"]
 
-        teams_map = {
-            "away": {"rpg": teams.get(away_name, {}).get("rpg", 0)},
-            "home": {"rpg": teams.get(home_name, {}).get("rpg", 0)}
-        }
-
-        away_pct, home_pct = model(away, home, teams_map)
+        away_pct, home_pct = model(away, home, offense, away_team, home_team)
 
         diff = abs(away_pct - home_pct)
 
-        label, stake = classify(diff)
+        if diff < 8:
+            continue  # filtro institucional (ruido eliminado)
 
-        if stake == 0:
-            continue
+        msg = f"""🏦 MLB INSTITUTIONAL MODEL 🏦
 
-        update_weights(diff)
-
-        msg = f"""🏦 MLB QUANT AUTO-OPT 🏦
-
-{away_name} vs {home_name}
+{away_team} vs {home_team}
 
 Pitcher Visitante: {fmt(away)}
 Pitcher Local: {fmt(home)}
 
 📊 Probabilidad:
-Visitante: {round(away_pct,1)}%
-Local: {round(home_pct,1)}%
+Visitante: {away_pct}%
+Local: {home_pct}%
 
-📈 {label}
+📈 {edge(diff)}
 📌 Pick: {pick(away_pct, home_pct)}
-💰 Stake: {stake}u
+{stake(diff)}
 
 ──────────────────
 """
@@ -267,7 +218,7 @@ Local: {round(home_pct,1)}%
             timeout=10
         )
 
-        print(f"Sent {away_name} vs {home_name}")
+        print(f"Sent {away_team} vs {home_team}")
 
 
 if __name__ == "__main__":
