@@ -143,7 +143,6 @@ def main():
 
 📌 Favorito modelo:
 {mejor}
-"""
 
         send_message(msg)
 
