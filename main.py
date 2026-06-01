@@ -1,5 +1,6 @@
 import os
 import requests
+import pandas as pd
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -17,19 +18,19 @@ def get_pitcher_stats(player_id):
 
         stats = data.get("stats", [])
         if not stats or not stats[0].get("splits"):
-            return None, None
+            return 0, 0
 
         stat = stats[0]["splits"][0]["stat"]
-        return stat.get("era"), stat.get("whip")
+        return float(stat.get("era", 0)), float(stat.get("whip", 0))
 
     except:
-        return None, None
+        return 0, 0
 
 
 # -----------------------------
 # PROBABLE PITCHERS
 # -----------------------------
-def get_probable_pitchers(game_pk):
+def get_pitchers(game_pk):
     try:
         url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
         data = requests.get(url, timeout=10).json()
@@ -49,67 +50,40 @@ def get_probable_pitchers(game_pk):
 
 
 # -----------------------------
-# ENRICH PITCHERS
-# -----------------------------
-def enrich_pitchers(p):
-    if not p:
-        return None
-
-    if p["away"]["id"]:
-        p["away"]["era"], p["away"]["whip"] = get_pitcher_stats(p["away"]["id"])
-    else:
-        p["away"]["era"], p["away"]["whip"] = None, None
-
-    if p["home"]["id"]:
-        p["home"]["era"], p["home"]["whip"] = get_pitcher_stats(p["home"]["id"])
-    else:
-        p["home"]["era"], p["home"]["whip"] = None, None
-
-    return p
-
-
-# -----------------------------
-# OFFENSE
+# OFFENSE METRIC
 # -----------------------------
 def get_offense():
-    try:
-        url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
-        data = requests.get(url, timeout=10).json()
+    url = "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026"
+    data = requests.get(url, timeout=10).json()
 
-        teams = {}
+    teams = {}
 
-        for r in data.get("records", []):
-            for t in r.get("teamRecords", []):
-                name = t["team"]["name"]
-                runs = float(t.get("runsScored", 0))
-                games = float(t.get("gamesPlayed", 1))
-                teams[name] = runs / games
+    for r in data.get("records", []):
+        for t in r.get("teamRecords", []):
+            name = t["team"]["name"]
+            runs = float(t.get("runsScored", 0))
+            games = float(t.get("gamesPlayed", 1))
+            teams[name] = runs / games
 
-        return teams
-
-    except:
-        return {}
+    return teams
 
 
 # -----------------------------
-# MODEL QUANTITATIVO
+# MODEL
 # -----------------------------
 def model(away, home, offense, away_team, home_team):
+
     a = 50
     h = 50
 
-    if away and home:
+    # pitching
+    a += (home["era"] - away["era"]) * 9
+    h -= (home["era"] - away["era"]) * 9
 
-        if away["era"] and home["era"]:
-            diff = float(home["era"]) - float(away["era"])
-            a += diff * 9
-            h -= diff * 9
+    a += (home["whip"] - away["whip"]) * 6
+    h -= (home["whip"] - away["whip"]) * 6
 
-        if away["whip"] and home["whip"]:
-            diff = float(home["whip"]) - float(away["whip"])
-            a += diff * 6
-            h -= diff * 6
-
+    # offense
     if away_team in offense and home_team in offense:
         diff = offense[away_team] - offense[home_team]
         a += diff * 7
@@ -117,15 +91,13 @@ def model(away, home, offense, away_team, home_team):
 
     total = a + h
 
-    return round((a / total) * 100, 1), round((h / total) * 100, 1)
+    return round(a / total * 100, 1), round(h / total * 100, 1)
 
 
 # -----------------------------
-# EDGE / CLV SIMPLE (SIN ODDS API)
+# EDGE (CLV PROXY)
 # -----------------------------
-def edge(model_a, model_h):
-    diff = abs(model_a - model_h)
-
+def edge(diff):
     if diff >= 15:
         return "🟢 Ventaja fuerte"
     elif diff >= 9:
@@ -136,15 +108,15 @@ def edge(model_a, model_h):
 
 
 # -----------------------------
-# STAKE HUMANO
+# STAKE SIMPLE
 # -----------------------------
 def stake(diff):
     if diff >= 15:
-        return "💰💰💰 Alta convicción"
+        return "💰💰💰 Alta"
     elif diff >= 9:
-        return "💰💰 Media convicción"
+        return "💰💰 Media"
     elif diff >= 6:
-        return "💰 Baja convicción"
+        return "💰 Baja"
     return None
 
 
@@ -156,64 +128,126 @@ def pick(a, h):
 
 
 # -----------------------------
-# FORMAT
+# BACKTEST ENGINE (simple)
 # -----------------------------
-def fmt(p):
-    if not p:
-        return "TBD"
-    return f"{p['name']} | ERA {p.get('era','N/A')} | WHIP {p.get('whip','N/A')}"
+def backtest_model(games, offense):
+
+    results = []
+
+    for g in games:
+
+        try:
+            pk = g["gamePk"]
+            away_team = g["teams"]["away"]["team"]["name"]
+            home_team = g["teams"]["home"]["team"]["name"]
+
+            pitchers = get_pitchers(pk)
+            if not pitchers:
+                continue
+
+            away_id = pitchers["away"]["id"]
+            home_id = pitchers["home"]["id"]
+
+            away_stats = {"era": 0, "whip": 0}
+            home_stats = {"era": 0, "whip": 0}
+
+            if away_id:
+                away_stats["era"], away_stats["whip"] = get_pitcher_stats(away_id)
+
+            if home_id:
+                home_stats["era"], home_stats["whip"] = get_pitcher_stats(home_id)
+
+            a, h = model(away_stats, home_stats, offense, away_team, home_team)
+
+            diff = abs(a - h)
+
+            if diff < 6:
+                continue
+
+            pick_side = pick(a, h)
+
+            # resultado real
+            result = g["teams"]["away"]["score"] > g["teams"]["home"]["score"]
+            real = "Visitante" if result else "Local"
+
+            win = pick_side == real
+
+            results.append({
+                "pick": pick_side,
+                "diff": diff,
+                "win": win
+            })
+
+        except:
+            continue
+
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        return
+
+    roi = df["win"].sum() - (len(df) - df["win"].sum())
+    win_rate = df["win"].mean() * 100
+
+    print("\n📊 BACKTEST RESULTADOS")
+    print(f"ROI: {roi}")
+    print(f"Win rate: {win_rate:.2f}%")
+    print(df.head())
 
 
 # -----------------------------
-# MAIN
+# LIVE BOT
 # -----------------------------
 def main():
+
     data = requests.get(SCHEDULE_URL, timeout=10).json()
     offense = get_offense()
 
-    games = data.get("dates", [])
-    if not games:
-        return
+    games = data.get("dates", [])[0].get("games", [])
 
-    for g in games[0].get("games", []):
+    for g in games:
 
         pk = g["gamePk"]
 
         away_team = g["teams"]["away"]["team"]["name"]
         home_team = g["teams"]["home"]["team"]["name"]
 
-        pitchers = enrich_pitchers(get_probable_pitchers(pk))
-
+        pitchers = get_pitchers(pk)
         if not pitchers:
             continue
 
         away = pitchers["away"]
         home = pitchers["home"]
 
-        away_pct, home_pct = model(away, home, offense, away_team, home_team)
+        away_stats = {"era": 0, "whip": 0}
+        home_stats = {"era": 0, "whip": 0}
 
-        diff = abs(away_pct - home_pct)
+        if away["id"]:
+            away_stats["era"], away_stats["whip"] = get_pitcher_stats(away["id"])
 
-        e = edge(away_pct, home_pct)
+        if home["id"]:
+            home_stats["era"], home_stats["whip"] = get_pitcher_stats(home["id"])
+
+        a, h = model(away_stats, home_stats, offense, away_team, home_team)
+
+        diff = abs(a - h)
+
+        e = edge(diff)
+        s = stake(diff)
 
         if not e:
             continue
 
-        s = stake(diff)
-
-        msg = f"""⚾ MLB QUANT MODEL ⚾
+        msg = f"""⚾ MLB QUANT SYSTEM ⚾
 
 {away_team} vs {home_team}
 
-Pitcher Visitante: {fmt(away)}
-Pitcher Local: {fmt(home)}
-
 📊 Probabilidad:
-Visitante: {away_pct}%
-Local: {home_pct}%
+Visitante: {a}%
+Local: {h}%
 
 📈 {e}
-📌 Pick: {pick(away_pct, home_pct)}
+📌 Pick: {pick(a,h)}
 {s if s else ""}
 
 ──────────────────
@@ -229,4 +263,10 @@ Local: {home_pct}%
 
 
 if __name__ == "__main__":
+
+    # LIVE MODE
     main()
+
+    # BACKTEST MODE (opcional manual)
+    # data = requests.get(SCHEDULE_URL).json()
+    # backtest_model(data.get("dates",[0]).get("games",[]), get_offense())
