@@ -1,18 +1,16 @@
 import os
 import requests
 
-API_KEY = os.getenv("ODDS_API_KEY")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-
-params = {
-    "apiKey": API_KEY,
-    "regions": "us",
-    "markets": "h2h",
-    "oddsFormat": "decimal"
+r = requests.post(
+f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+json={
+"chat_id": CHAT_ID,
+"text": "✅ Nuevo token funcionando correctamente"
 }
+)
 
-r = requests.get(url, params=params)
-
-print("STATUS:", r.status_code)
-print(r.text[:500])
+print(r.status_code)
+print(r.text)
