@@ -8,6 +8,7 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 def send_message(text):
+try:
 requests.post(
 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
 json={
@@ -16,6 +17,8 @@ json={
 },
 timeout=20
 )
+except Exception as e:
+print("Error Telegram:", e)
 
 def main():
 
