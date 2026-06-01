@@ -35,30 +35,27 @@ def remove_vig(p1, p2):
 # MODELO BASE MLB (TU EDGE)
 # =========================
 def modelo_mlb(team_a, team_b):
-    """
-    Modelo simple:
-    - fuerza ofensiva simulada
-    - fuerza defensiva simulada
-    """
 
-    ofensiva = {
-        "default": 4.5  # carreras promedio
+    ratings = {
+        "Los Angeles Dodgers": 58,
+        "New York Yankees": 57,
+        "Philadelphia Phillies": 56,
+        "Detroit Tigers": 54,
+        "Minnesota Twins": 53,
+        "Milwaukee Brewers": 53,
+        "Tampa Bay Rays": 52,
+        "San Francisco Giants": 52,
+        "Kansas City Royals": 51,
+        "Cincinnati Reds": 51,
+        "St. Louis Cardinals": 50,
+        "Arizona Diamondbacks": 50,
+        "Los Angeles Angels": 48,
+        "Colorado Rockies": 42,
+        "Chicago White Sox": 40
     }
 
-    defensa = {
-        "default": 4.5  # ERA promedio
-    }
-
-    # scoring base
-    a = 50
-    b = 50
-
-    # ventaja aleatoria estructurada por nombre (proxy simple)
-    hash_a = sum(ord(c) for c in team_a) % 10
-    hash_b = sum(ord(c) for c in team_b) % 10
-
-    a += hash_a * 1.2
-    b += hash_b * 1.2
+    a = ratings.get(team_a, 50)
+    b = ratings.get(team_b, 50)
 
     total = a + b
 
