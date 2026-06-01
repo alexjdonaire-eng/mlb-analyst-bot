@@ -151,7 +151,7 @@ def main():
         # =========================
         # FILTRO
         # =========================
-        if edge < 0.05:
+        if edge < 0.10:
             print("Sin valor:", away, "vs", home)
             continue
         # =========================
