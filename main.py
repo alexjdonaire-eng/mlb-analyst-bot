@@ -24,11 +24,11 @@ def send_message(text):
 # =========================
 
 def prob(odds):
-return 1 / odds
+    return 1 / odds
 
 def remove_vig(p1, p2):
-total = p1 + p2
-return p1 / total, p2 / total
+    total = p1 + p2
+    return p1 / total, p2 / total
 
 # =========================
 
