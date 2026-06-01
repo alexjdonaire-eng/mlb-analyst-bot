@@ -1,6 +1,5 @@
 import os
 import requests
-import json
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -8,20 +7,11 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-# =========================
-# TELEGRAM
-# =========================
 def send_message(text):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}
     )
-
-# =========================
-
-# PROBABILIDAD
-
-# =========================
 
 def prob(odds):
     return 1 / odds
@@ -29,12 +19,6 @@ def prob(odds):
 def remove_vig(p1, p2):
     total = p1 + p2
     return p1 / total, p2 / total
-
-# =========================
-
-# MODELO BASE MLB
-
-# =========================
 
 def modelo_mlb(team_a, team_b):
 
@@ -74,17 +58,9 @@ def modelo_mlb(team_a, team_b):
     a = ratings.get(team_a, 50)
     b = ratings.get(team_b, 50)
 
-    print(team_a, a)
-    print(team_b, b)
-
     total = a + b
 
     return a / total, b / total
-# =========================
-
-# MAIN
-
-# =========================
 
 def main():
 
@@ -105,76 +81,70 @@ def main():
 
     games = r.json()
 
-reporte = "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n"
+    reporte = "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n"
 
-for game in games:
+    for game in games:
 
-    home = game["home_team"]
-    away = game["away_team"]
+        home = game["home_team"]
+        away = game["away_team"]
 
-    if not game["bookmakers"]:
-        continue
+        if not game["bookmakers"]:
+            continue
 
-    book = game["bookmakers"][0]
-    outcomes = book["markets"][0]["outcomes"]
+        book = game["bookmakers"][0]
+        outcomes = book["markets"][0]["outcomes"]
 
-    home_odds = None
-    away_odds = None
+        home_odds = None
+        away_odds = None
 
-    for o in outcomes:
-        if o["name"] == home:
-            home_odds = o["price"]
+        for o in outcomes:
 
-        if o["name"] == away:
-            away_odds = o["price"]
+            if o["name"] == home:
+                home_odds = o["price"]
 
-    if not home_odds or not away_odds:
-        continue
+            if o["name"] == away:
+                away_odds = o["price"]
 
-    # MERCADO
-    p_home = prob(home_odds)
-    p_away = prob(away_odds)
+        if not home_odds or not away_odds:
+            continue
 
-    p_home, p_away = remove_vig(p_home, p_away)
+        p_home = prob(home_odds)
+        p_away = prob(away_odds)
 
-    # MODELO
-    m_home, m_away = modelo_mlb(home, away)
+        p_home, p_away = remove_vig(p_home, p_away)
 
-    # EDGE
-    edge_home = m_home - p_home
-    edge_away = m_away - p_away
+        m_home, m_away = modelo_mlb(home, away)
 
-    edge = max(edge_home, edge_away)
+        edge_home = m_home - p_home
+        edge_away = m_away - p_away
 
-    mejor = home if edge_home > edge_away else away
+        edge = max(edge_home, edge_away)
 
-    # CONFIANZA
-    if edge >= 0.20:
-        confianza = "🔥 MUY ALTA"
-    elif edge >= 0.15:
-        confianza = "✅ ALTA"
-    elif edge >= 0.10:
-        confianza = "⚠️ MEDIA"
+        mejor = home if edge_home > edge_away else away
+
+        if edge >= 0.20:
+            confianza = "🔥 MUY ALTA"
+        elif edge >= 0.15:
+            confianza = "✅ ALTA"
+        elif edge >= 0.10:
+            confianza = "⚠️ MEDIA"
+        else:
+            confianza = "❌ BAJA"
+
+        if edge < 0.10:
+            continue
+
+        reporte += (
+            f"⚾ {away} vs {home}\n"
+            f"🎯 Pick: {mejor}\n"
+            f"📈 Edge: {round(edge * 100, 2)}%\n"
+            f"🎯 Confianza: {confianza}\n\n"
+        )
+
+    if reporte != "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n":
+        send_message(reporte)
     else:
-        confianza = "❌ BAJA"
-
-    # FILTRO
-    if edge < 0.10:
-        continue
-
-    reporte += (
-        f"⚾ {away} vs {home}\n"
-        f"🎯 Pick: {mejor}\n"
-        f"📈 Edge: {round(edge * 100, 2)}%\n"
-        f"🎯 Confianza: {confianza}\n\n"
-    )
-
-if reporte != "⚾ ANÁLISIS MLB DEL DÍA ⚾\n\n":
-    send_message(reporte)
-else:
-    send_message("❌ No se encontraron picks con valor hoy.")
-
-print("BOT INICIADO")
+        send_message("❌ No se encontraron picks con valor hoy.")
 
 if __name__ == "__main__":
     main()
