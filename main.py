@@ -3,16 +3,20 @@ import requests
 from datetime import datetime, timezone
 import math
 
+# =========================
+# CONFIG
+# =========================
+
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-PITCHERS_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date="
+MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date="
 
 
 # =========================
-# LOG SYSTEM
+# LOGS
 # =========================
 
 def log(msg):
@@ -24,6 +28,10 @@ def log(msg):
 # =========================
 
 def send_message(text):
+    if not TOKEN or not CHAT_ID:
+        log("❌ Missing Telegram config")
+        return
+
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -72,7 +80,7 @@ ratings = {
 
 
 # =========================
-# MODEL
+# PROBABILITY MODEL
 # =========================
 
 def predict(home, away):
@@ -87,7 +95,7 @@ def predict(home, away):
 
 
 def prob(odds):
-    return 1 / odds
+    return 1 / odds if odds else 0
 
 
 def remove_vig(p1, p2):
@@ -96,45 +104,70 @@ def remove_vig(p1, p2):
 
 
 # =========================
-# PITCHER FETCH (REAL MLB API)
+# PITCHERS SYSTEM (FIXED)
 # =========================
 
-def get_pitchers():
+def get_pitcher_map():
+
     try:
-        url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + datetime.utcnow().strftime("%Y-%m-%d")
+        url = MLB_SCHEDULE_URL + datetime.utcnow().strftime("%Y-%m-%d")
         r = requests.get(url, timeout=10)
-        return r.json()
+        data = r.json()
     except:
-        return None
+        return {}
 
+    pitcher_map = {}
 
-def extract_pitchers(data, home, away):
     try:
         games = data.get("dates", [])[0].get("games", [])
-        for g in games:
-            teams = g["teams"]
-            home_p = teams["home"]["probablePitcher"]["fullName"]
-            away_p = teams["away"]["probablePitcher"]["fullName"]
-            home_era = teams["home"]["probablePitcher"]["stats"][0]["splits"][0]["stat"]["era"]
-            away_era = teams["away"]["probablePitcher"]["stats"][0]["splits"][0]["stat"]["era"]
 
-            return {
-                "home_pitcher": home_p,
-                "away_pitcher": away_p,
-                "home_era": float(home_era),
-                "away_era": float(away_era)
+        for g in games:
+
+            home_team = g["teams"]["home"]["team"]["name"]
+            away_team = g["teams"]["away"]["team"]["name"]
+
+            home_pitcher = g["teams"]["home"].get("probablePitcher", {})
+            away_pitcher = g["teams"]["away"].get("probablePitcher", {})
+
+            home_name = home_pitcher.get("fullName", "TBD")
+            away_name = away_pitcher.get("fullName", "TBD")
+
+            home_era = 4.20
+            away_era = 4.20
+
+            try:
+                home_era = float(
+                    home_pitcher.get("stats", [{}])[0]
+                    .get("splits", [{}])[0]
+                    .get("stat", {}).get("era", 4.2)
+                )
+            except:
+                pass
+
+            try:
+                away_era = float(
+                    away_pitcher.get("stats", [{}])[0]
+                    .get("splits", [{}])[0]
+                    .get("stat", {}).get("era", 4.2)
+                )
+            except:
+                pass
+
+            pitcher_map[(away_team, home_team)] = {
+                "away_pitcher": away_name,
+                "home_pitcher": home_name,
+                "away_era": away_era,
+                "home_era": home_era
             }
+
     except:
-        return {
-            "home_pitcher": "TBD",
-            "away_pitcher": "TBD",
-            "home_era": 4.20,
-            "away_era": 4.20
-        }
+        pass
+
+    return pitcher_map
 
 
 # =========================
-# EDGE ENGINE (SHARP)
+# ANALYSIS ENGINE
 # =========================
 
 def analyze(home, away, home_odds, away_odds, pitchers):
@@ -146,9 +179,15 @@ def analyze(home, away, home_odds, away_odds, pitchers):
 
     m_home, m_away = predict(home, away)
 
-    # pitcher adjustment (VERY IMPORTANT)
-    home_adj = 1 / (pitchers["home_era"] + 1)
-    away_adj = 1 / (pitchers["away_era"] + 1)
+    # pitcher adjustment
+    key = (away, home)
+    pitch = pitchers.get(key, None)
+
+    if pitch:
+        home_adj = 1 / (pitch["home_era"] + 1)
+        away_adj = 1 / (pitch["away_era"] + 1)
+    else:
+        home_adj = away_adj = 1
 
     m_home *= home_adj
     m_away *= away_adj
@@ -161,9 +200,9 @@ def analyze(home, away, home_odds, away_odds, pitchers):
     edge_away = m_away - p_away
 
     if edge_home > edge_away:
-        return home, edge_home, m_home, p_home, pitchers["home_pitcher"], pitchers["home_era"]
+        return home, edge_home, m_home, p_home, pitch
     else:
-        return away, edge_away, m_away, p_away, pitchers["away_pitcher"], pitchers["away_era"]
+        return away, edge_away, m_away, p_away, pitch
 
 
 # =========================
@@ -181,22 +220,33 @@ def main():
             "regions": "us",
             "markets": "h2h",
             "oddsFormat": "decimal"
-        }
+        },
+        timeout=10
     )
 
     games = r.json()
     log(f"📦 Games loaded: {len(games)}")
 
-    pitcher_data = get_pitchers()
+    pitchers = get_pitcher_map()
 
+    seen = set()
     all_picks = []
 
     for game in games:
 
-        home = game["home_team"]
-        away = game["away_team"]
+        home = game.get("home_team")
+        away = game.get("away_team")
 
-        if not game["bookmakers"]:
+        if not home or not away:
+            continue
+
+        key = f"{away}_vs_{home}"
+
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if not game.get("bookmakers"):
             continue
 
         book = game["bookmakers"][0]
@@ -214,9 +264,7 @@ def main():
         if not home_odds or not away_odds:
             continue
 
-        pitchers = extract_pitchers(pitcher_data, home, away)
-
-        pick, edge, model_p, market_p, pitcher, era = analyze(
+        pick, edge, model_p, market_p, pitch = analyze(
             home, away, home_odds, away_odds, pitchers
         )
 
@@ -226,23 +274,29 @@ def main():
             "edge": edge,
             "model": model_p,
             "market": market_p,
-            "pitcher": pitcher,
-            "era": era
+            "pitch": pitch
         })
 
-    # =========================
-    # RANK PICKS (SHARP STYLE)
-    # =========================
-
+    # sort by edge
     all_picks.sort(key=lambda x: x["edge"], reverse=True)
 
     log(f"🏁 Total picks: {len(all_picks)}")
 
-    # send TOP 6 ONLY (sharp constraint)
+    # =========================
+    # SEND TOP PICKS
+    # =========================
+
     for p in all_picks[:6]:
 
         if p["edge"] < 0.06:
             continue
+
+        pitch = p["pitch"]
+
+        if pitch:
+            pitcher_line = f"🔥 Pitcher: {pitch['away_pitcher']} ({pitch['away_era']}) vs {pitch['home_pitcher']} ({pitch['home_era']})"
+        else:
+            pitcher_line = "🔥 Pitcher: TBD vs TBD"
 
         message = f"""⚾ SHARP MLB ALERT
 
@@ -253,8 +307,7 @@ def main():
 📈 Model: {round(p['model']*100,2)}%
 📉 Market: {round(p['market']*100,2)}
 
-🔥 Pitcher: {p['pitcher']}
-📊 ERA: {p['era']}
+{pitcher_line}
 
 🧠 SHARP MODE PRO
 🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
