@@ -54,16 +54,17 @@ def latest_games(history):
 
     games = {}
 
-    for row in history:
+    for row in reversed(history):
 
         gid = row.get("game_id")
 
         if not gid:
             continue
 
-        games[gid] = row
+        if gid not in games:
+            games[gid] = row
 
-    return games.values()
+    return list(games.values())
 
 # =========================
 # PICK WINNER
