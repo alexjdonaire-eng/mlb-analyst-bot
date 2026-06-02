@@ -73,18 +73,22 @@ def latest_games(history):
 # PICK WINNER
 # =========================
 
-def pick_winner(game):
+winner, prob = result
 
-    odds = game.get("odds", {})
+if prob >= 65:
+    confidence = "🔥 ALTA"
+elif prob >= 58:
+    confidence = "✅ MEDIA"
+else:
+    confidence = "⚠️ BAJA"
 
-    if len(odds) < 2:
-        return None
-
-    winner = min(odds, key=odds.get)
-
-    prob = round((1 / odds[winner]) * 100, 1)
-
-    return winner, prob
+report += (
+    f"⚾ {away} vs {home}\n\n"
+    f"🎯 Ganador: {winner} ({prob}%)\n"
+    f"📊 Confianza: {confidence}\n"
+    f"⭐ Mejor jugada: {winner}\n\n"
+    f"────────────────────\n\n"
+)
 
 # =========================
 # MAIN
