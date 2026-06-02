@@ -67,7 +67,7 @@ def get_mlb_games():
                 "away_team": game["teams"]["away"]["team"]["name"],
                 "home_pitcher": game["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
                 "away_pitcher": game["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
-                "status": game.get("status", {}).get("detailedState")
+                "status": game.get("status", {}).get("detailedState", "")
             })
 
     return games
@@ -95,42 +95,41 @@ def get_odds_games():
     return r.json()
 
 # =========================
-# MATCHING FIXED (NO DUPLICATES)
+# MATCHING FIXED
 # =========================
 
 def match_games(mlb_games, odds_games):
 
     matched = []
-    used_odds = set()
+    used_keys = set()
 
     for m in mlb_games:
 
         mlb_home = normalize_team(m["home_team"])
         mlb_away = normalize_team(m["away_team"])
 
+        match_key = f"{mlb_home}_vs_{mlb_away}"
+
         best_match = None
-        best_index = None
 
-        for i, o in enumerate(odds_games):
-
-            if i in used_odds:
-                continue
+        for o in odds_games:
 
             odds_home = normalize_team(o["home_team"])
             odds_away = normalize_team(o["away_team"])
 
-            if (
-                (mlb_home == odds_home and mlb_away == odds_away)
-                or
-                (mlb_home == odds_away and mlb_away == odds_home)
-            ):
+            odds_key_1 = f"{odds_home}_vs_{odds_away}"
+            odds_key_2 = f"{odds_away}_vs_{odds_home}"
+
+            if match_key == odds_key_1 or match_key == odds_key_2:
+
+                if match_key in used_keys:
+                    continue
+
                 best_match = o
-                best_index = i
+                used_keys.add(match_key)
                 break
 
         if best_match:
-
-            used_odds.add(best_index)
 
             matched.append({
                 **m,
@@ -140,7 +139,41 @@ def match_games(mlb_games, odds_games):
     return matched
 
 # =========================
-# MODEL SIMPLE
+# CLASSIFY GAME (LIVE / PRE)
+# =========================
+
+def classify_game(game):
+
+    try:
+
+        game_time = datetime.fromisoformat(
+            game["gameDate"].replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+
+        now = datetime.now(timezone.utc)
+
+        status = game.get("status", "").lower()
+
+        # FINAL
+        if "final" in status or "completed" in status:
+            return None
+
+        # LIVE
+        if "in progress" in status or "live" in status:
+            return "LIVE"
+
+        # FUTURE (PRE-GAME)
+        if game_time > now:
+            return "PRE"
+
+        return "LIVE"
+
+    except Exception as e:
+        print("CLASSIFY ERROR:", e)
+        return None
+
+# =========================
+# SIMPLE MODEL
 # =========================
 
 def pick_model(game):
@@ -177,74 +210,69 @@ def pick_model(game):
     return game["home_team"]
 
 # =========================
-# FILTER TODAY
-# =========================
-
-def is_today(game):
-
-    try:
-        game_date = datetime.fromisoformat(
-            game["gameDate"].replace("Z", "+00:00")
-        ).date()
-
-        today = datetime.now(timezone.utc).date()
-
-        return game_date == today
-
-    except Exception as e:
-        print("DATE ERROR:", e)
-        return False
-
-# =========================
 # MAIN
 # =========================
 
 def main():
 
-    print("🚀 MLB V8 FIXED SYSTEM")
+    print("🚀 MLB V8 LIVE SYSTEM")
 
     mlb_games = get_mlb_games()
     odds_games = get_odds_games()
 
     games = match_games(mlb_games, odds_games)
 
-    print("MLB GAMES:", len(mlb_games))
-    print("MATCHED GAMES:", len(games))
+    print("MLB:", len(mlb_games))
+    print("MATCHED:", len(games))
 
-    report = "🏦 MLB QUANT V8 FIXED\n\n"
+    pre_report = "🟢 PRE-GAME PICKS\n\n"
+    live_report = "🔴 LIVE BETTING\n\n"
 
-    total = 0
-    seen = set()
+    pre_count = 0
+    live_count = 0
 
     for game in games:
 
-        if not is_today(game):
+        state = classify_game(game)
+
+        if state is None:
             continue
-
-        game_id = game.get("id")
-
-        if game_id in seen:
-            continue
-
-        seen.add(game_id)
 
         away = game["away_team"]
         home = game["home_team"]
 
         pick = pick_model(game)
 
-        total += 1
+        if state == "PRE":
 
-        report += (
-            f"⚾ {away} vs {home}\n"
-            f"🏟 Pitchers: {game['away_pitcher']} vs {game['home_pitcher']}\n"
-            f"🎯 Pick: {pick}\n\n"
-            f"────────────────────\n\n"
-        )
+            pre_count += 1
 
-    report = f"📊 Juegos analizados: {total}\n\n" + report
+            pre_report += (
+                f"⚾ {away} vs {home}\n"
+                f"🏟 {game['away_pitcher']} vs {game['home_pitcher']}\n"
+                f"🎯 Pick: {pick}\n\n"
+                f"────────────────────\n\n"
+            )
 
-    send(report)
+        else:
+
+            live_count += 1
+
+            live_report += (
+                f"🔴 {away} vs {home} (LIVE)\n"
+                f"🏟 {game['away_pitcher']} vs {game['home_pitcher']}\n"
+                f"🎯 Pick: {pick}\n\n"
+                f"────────────────────\n\n"
+            )
+
+    final_msg = (
+        f"📊 MLB V8 LIVE SYSTEM\n"
+        f"🟢 PRE: {pre_count}\n"
+        f"🔴 LIVE: {live_count}\n\n"
+        + pre_report + "\n" + live_report
+    )
+
+    send(final_msg)
 
     print("✅ Enviado a Telegram")
 
