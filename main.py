@@ -1,56 +1,51 @@
 import os
-import json
 import requests
 
-HISTORY_FILE = "market_history.jsonl"
+# =========================
+# VARIABLES
+# =========================
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================
-# TELEGRAM
+# DEBUG
 # =========================
 
-def send(msg):
+print("TOKEN EXISTS:", bool(TOKEN))
+print("CHAT_ID EXISTS:", bool(CHAT_ID))
 
-    print("TOKEN:", TOKEN)
-    print("CHAT_ID:", CHAT_ID)
+# =========================
+# TELEGRAM TEST
+# =========================
+
+def send_test():
 
     if not TOKEN:
-        print("ERROR: TELEGRAM_BOT_TOKEN no encontrado")
+        print("ERROR: TELEGRAM_BOT_TOKEN NOT FOUND")
         return
 
     if not CHAT_ID:
-        print("ERROR: TELEGRAM_CHAT_ID no encontrado")
+        print("ERROR: TELEGRAM_CHAT_ID NOT FOUND")
         return
 
-    r = requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
-    )
-
-    print("Telegram status:", r.status_code)
-    print("Telegram response:", r.text)
-
-# =========================
-# LOAD HISTORY
-# =========================
-
-def load_history():
-
-    data = []
-
     try:
-        with open(HISTORY_FILE, "r") as f:
-            for line in f:
-                data.append(json.loads(line))
-    except Exception as e:
-        print("History error:", e)
 
-    return data
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": "🧪 TEST FROM RAILWAY"
+            },
+            timeout=20
+        )
+
+        print("STATUS:", r.status_code)
+        print("RESPONSE:", r.text)
+
+    except Exception as e:
+
+        print("TELEGRAM ERROR:", e)
 
 # =========================
 # MAIN
@@ -58,16 +53,15 @@ def load_history():
 
 def main():
 
-    history = load_history()
+    print("STARTING TEST")
 
-    report = (
-        "🏦 MLB ANALYZER\n\n"
-        f"Snapshots encontrados: {len(history)}\n"
-    )
+    send_test()
 
-    send(report)
+    print("FINISHED")
 
-    print("ANALYZER FINISHED")
+# =========================
+# RUN
+# =========================
 
 if __name__ == "__main__":
     main()
