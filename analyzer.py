@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import math
 
 HISTORY_FILE = "market_history.jsonl"
 
@@ -19,37 +20,27 @@ def send(msg):
             json={"chat_id": CHAT_ID, "text": msg},
             timeout=20
         )
-    except Exception as e:
-        print("TELEGRAM ERROR:", e)
+    except:
+        pass
 
 
 # =========================
-# LOAD CLEAN DATA
+# LOAD DATA
 # =========================
 
-def load_history():
+def load():
     rows = []
-
     try:
         with open(HISTORY_FILE, "r") as f:
             for line in f:
                 try:
                     r = json.loads(line)
-
-                    if "game_id" not in r:
-                        continue
-                    if "odds" not in r:
-                        continue
-                    if "time" not in r:
-                        continue
-
-                    rows.append(r)
-
+                    if "game_id" in r and "odds" in r:
+                        rows.append(r)
                 except:
                     continue
     except:
         pass
-
     return rows
 
 
@@ -58,51 +49,54 @@ def load_history():
 # =========================
 
 def group(rows):
-    games = {}
-
+    g = {}
     for r in rows:
-        games.setdefault(r["game_id"], []).append(r)
+        g.setdefault(r["game_id"], []).append(r)
 
-    for g in games:
-        games[g].sort(key=lambda x: x["time"])
+    for k in g:
+        g[k].sort(key=lambda x: x["time"])
 
-    return games
+    return g
 
 
 # =========================
-# CLV CALCULATION CORE
+# CLV CORE
 # =========================
 
-def compute_clv(series):
+def clv(series):
     if len(series) < 2:
         return 0
+    return (series[0] - series[-1]) / series[0]
 
-    open_odds = series[0]
-    close_odds = series[-1]
 
-    if open_odds == 0:
+# =========================
+# IMPROVED PROB MODEL
+# =========================
+
+def model(series):
+    if len(series) < 4:
         return 0
-
-    return (open_odds - close_odds) / open_odds
+    return 1 / (sum(series[-5:]) / len(series[-5:]))
 
 
 # =========================
-# VALUE MODEL (conservador real)
+# KELLY FRACTION (RISK ENGINE)
 # =========================
 
-def model_prob(series):
-    if len(series) < 3:
+def kelly(edge, odds):
+    if odds <= 1:
         return 0
-
-    avg = sum(series[-4:]) / len(series[-4:])
-    return 1 / avg
+    b = odds - 1
+    p = max(min(edge + (1 / odds), 0.99), 0.01)
+    q = 1 - p
+    return max((b * p - q) / b, 0)
 
 
 # =========================
-# ANALYSIS ENGINE (CLV CORE)
+# SIGNAL ENGINE
 # =========================
 
-def analyze_game(rows):
+def analyze(rows):
 
     if len(rows) < 6:
         return None
@@ -117,66 +111,67 @@ def analyze_game(rows):
         if len(series) < 6:
             continue
 
-        clv = compute_clv(series)
-
         open_odds = series[0]
         close_odds = series[-1]
 
-        model = model_prob(series)
+        clv_val = clv(series)
+        model_p = model(series)
+
         implied = 1 / close_odds if close_odds else 0
 
-        if model == 0:
+        if model_p == 0:
             continue
 
-        edge = model - implied
+        edge = model_p - implied
 
-        # =========================
-        # MARKET EFFICIENCY SCORE
-        # =========================
         volatility = max(series) - min(series)
 
-        efficiency = abs(clv) * 2 + volatility * 0.5
+        liquidity = abs(clv_val) + volatility * 0.3
 
         # =========================
-        # SMART MONEY SIGNAL
+        # EDGE QUALITY SCORE
         # =========================
-        smart_money = (
-            clv > 0.015 and      # line moved in your favor
-            edge > 0.01 and      # real value
-            efficiency > 0.8     # meaningful market movement
-        )
+        score = (edge * 120) + (clv_val * 100) + liquidity
 
-        score = (edge * 150) + (clv * 120) + efficiency
+        # =========================
+        # STAKING (PORTFOLIO ENGINE)
+        # =========================
+        kelly_size = kelly(edge, close_odds)
+        stake = round(kelly_size * 100, 2)
 
-        if smart_money:
+        # =========================
+        # FILTER INSTITUCIONAL
+        # =========================
+        if clv_val > 0.01 and edge > 0.015 and liquidity > 0.8:
 
             signals.append({
                 "team": team,
                 "open": open_odds,
                 "close": close_odds,
-                "clv": clv,
+                "clv": clv_val,
                 "edge": edge,
-                "efficiency": efficiency,
-                "score": score
+                "liquidity": liquidity,
+                "score": score,
+                "stake": stake
             })
 
     return signals
 
 
 # =========================
-# MAIN REPORT
+# MAIN DESK REPORT
 # =========================
 
 def main():
 
-    rows = load_history()
+    rows = load()
     games = group(rows)
 
     ranked = []
 
     for gid, rows in games.items():
 
-        signals = analyze_game(rows)
+        signals = analyze(rows)
 
         if not signals:
             continue
@@ -189,7 +184,7 @@ def main():
 
         for s in signals:
 
-            direction = "📉 CLV positive steam" if s["clv"] > 0 else "📈 reverse market"
+            direction = "📉 smart steam" if s["clv"] > 0 else "📈 reverse move"
 
             text += (
                 f"🔥 {s['team']}\n"
@@ -197,7 +192,8 @@ def main():
                 f"Open → Close: {s['open']} → {s['close']}\n"
                 f"CLV: {round(s['clv']*100,2)}%\n"
                 f"Edge: {round(s['edge']*100,2)}%\n"
-                f"Market efficiency: {round(s['efficiency'],2)}\n"
+                f"Liquidity: {round(s['liquidity'],2)}\n"
+                f"Stake (Kelly %): {s['stake']}%\n"
                 f"Score: {round(s['score'],2)}\n\n"
             )
 
@@ -208,14 +204,14 @@ def main():
     ranked.sort(reverse=True, key=lambda x: x[0])
 
     if not ranked:
-        report = "🏦 CLV TRADING ENGINE\n\n⚠️ No market inefficiencies detected."
+        report = "🏦 QUANT DESK\n\n⚠️ No institutional edges detected."
     else:
-        report = "🏦 CLV TRADING ENGINE\n\n"
+        report = "🏦 QUANT DESK - LIVE SIGNALS\n\n"
         for _, text in ranked[:5]:
             report += text + "────────────────────\n\n"
 
     send(report)
-    print("CLV ENGINE SENT")
+    print("QUANT DESK SENT")
 
 
 if __name__ == "__main__":
