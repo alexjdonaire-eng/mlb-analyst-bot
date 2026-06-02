@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # =========================
 # CONFIG
@@ -20,10 +20,7 @@ MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 def send(msg):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
+        json={"chat_id": CHAT_ID, "text": msg}
     )
 
 # =========================
@@ -40,7 +37,7 @@ def normalize_team(name):
     )
 
 # =========================
-# MLB GAMES
+# MLB
 # =========================
 
 def get_mlb_games():
@@ -51,7 +48,6 @@ def get_mlb_games():
     r = requests.get(url)
 
     if r.status_code != 200:
-        print("ERROR MLB:", r.text)
         return []
 
     data = r.json()
@@ -73,7 +69,7 @@ def get_mlb_games():
     return games
 
 # =========================
-# ODDS API
+# ODDS
 # =========================
 
 def get_odds_games():
@@ -88,95 +84,43 @@ def get_odds_games():
         }
     )
 
-    if r.status_code != 200:
-        print("ERROR ODDS:", r.text)
-        return []
-
-    return r.json()
+    return r.json() if r.status_code == 200 else []
 
 # =========================
-# MATCHING FIXED
+# MATCHING
 # =========================
 
 def match_games(mlb_games, odds_games):
 
     matched = []
-    used_keys = set()
+    used = set()
 
     for m in mlb_games:
 
-        mlb_home = normalize_team(m["home_team"])
-        mlb_away = normalize_team(m["away_team"])
-
-        match_key = f"{mlb_home}_vs_{mlb_away}"
-
-        best_match = None
+        mh = normalize_team(m["home_team"])
+        ma = normalize_team(m["away_team"])
+        key = f"{mh}_vs_{ma}"
 
         for o in odds_games:
 
-            odds_home = normalize_team(o["home_team"])
-            odds_away = normalize_team(o["away_team"])
+            oh = normalize_team(o["home_team"])
+            oa = normalize_team(o["away_team"])
+            okey1 = f"{oh}_vs_{oa}"
+            okey2 = f"{oa}_vs_{oh}"
 
-            odds_key_1 = f"{odds_home}_vs_{odds_away}"
-            odds_key_2 = f"{odds_away}_vs_{odds_home}"
+            if (key == okey1 or key == okey2) and key not in used:
 
-            if match_key == odds_key_1 or match_key == odds_key_2:
-
-                if match_key in used_keys:
-                    continue
-
-                best_match = o
-                used_keys.add(match_key)
+                matched.append({**m, "odds": o})
+                used.add(key)
                 break
-
-        if best_match:
-
-            matched.append({
-                **m,
-                "odds": best_match
-            })
 
     return matched
 
 # =========================
-# CLASSIFY GAME (LIVE / PRE)
+# EDGE CALC
 # =========================
 
-def classify_game(game):
-
-    try:
-
-        game_time = datetime.fromisoformat(
-            game["gameDate"].replace("Z", "+00:00")
-        ).astimezone(timezone.utc)
-
-        now = datetime.now(timezone.utc)
-
-        status = game.get("status", "").lower()
-
-        # FINAL
-        if "final" in status or "completed" in status:
-            return None
-
-        # LIVE
-        if "in progress" in status or "live" in status:
-            return "LIVE"
-
-        # FUTURE (PRE-GAME)
-        if game_time > now:
-            return "PRE"
-
-        return "LIVE"
-
-    except Exception as e:
-        print("CLASSIFY ERROR:", e)
-        return None
-
-# =========================
-# SIMPLE MODEL
-# =========================
-
-def pick_model(game):
+def get_edge(game):
 
     try:
 
@@ -190,24 +134,67 @@ def pick_model(game):
         away_odds = None
 
         for o in outcomes:
-
             if o["name"] == home:
                 home_odds = o["price"]
-
             if o["name"] == away:
                 away_odds = o["price"]
 
-        if home_odds and away_odds:
+        if not home_odds or not away_odds:
+            return None
 
-            if home_odds <= away_odds:
-                return home
-            else:
-                return away
+        # implied probability
+        home_prob = 1 / home_odds
+        away_prob = 1 / away_odds
 
-    except Exception as e:
-        print("MODEL ERROR:", e)
+        # normalize
+        total = home_prob + away_prob
+        home_prob /= total
+        away_prob /= total
 
-    return game["home_team"]
+        # simple model bias (pitcher placeholder)
+        bias = 0.02 if game["home_pitcher"] != "UNKNOWN" else 0
+
+        home_prob += bias
+
+        if home_prob > away_prob:
+            edge = home_prob - away_prob
+            return game["home_team"], edge
+        else:
+            edge = away_prob - home_prob
+            return game["away_team"], edge
+
+    except:
+        return None
+
+# =========================
+# FILTER (REAL BETTING WINDOW)
+# =========================
+
+def classify(game):
+
+    try:
+
+        t = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+
+        window_start = now - timedelta(hours=3)
+        window_end = now + timedelta(hours=18)
+
+        status = game.get("status", "").lower()
+
+        if "final" in status:
+            return None
+
+        if "in progress" in status:
+            return "LIVE"
+
+        if t < window_start or t > window_end:
+            return None
+
+        return "PRE"
+
+    except:
+        return None
 
 # =========================
 # MAIN
@@ -215,66 +202,59 @@ def pick_model(game):
 
 def main():
 
-    print("🚀 MLB V8 LIVE SYSTEM")
+    print("🚀 V8.1 EDGE SYSTEM")
 
-    mlb_games = get_mlb_games()
-    odds_games = get_odds_games()
+    mlb = get_mlb_games()
+    odds = get_odds_games()
 
-    games = match_games(mlb_games, odds_games)
+    games = match_games(mlb, odds)
 
-    print("MLB:", len(mlb_games))
-    print("MATCHED:", len(games))
+    picks = []
 
-    pre_report = "🟢 PRE-GAME PICKS\n\n"
-    live_report = "🔴 LIVE BETTING\n\n"
+    live = 0
+    pre = 0
 
-    pre_count = 0
-    live_count = 0
+    for g in games:
 
-    for game in games:
-
-        state = classify_game(game)
-
-        if state is None:
+        state = classify(g)
+        if not state:
             continue
 
-        away = game["away_team"]
-        home = game["home_team"]
+        result = get_edge(g)
+        if not result:
+            continue
 
-        pick = pick_model(game)
+        pick, edge = result
 
-        if state == "PRE":
+        if edge < 0.03:  # 🔥 FILTRO VALUE REAL
+            continue
 
-            pre_count += 1
+        picks.append({
+            "game": g,
+            "pick": pick,
+            "edge": edge,
+            "state": state
+        })
 
-            pre_report += (
-                f"⚾ {away} vs {home}\n"
-                f"🏟 {game['away_pitcher']} vs {game['home_pitcher']}\n"
-                f"🎯 Pick: {pick}\n\n"
-                f"────────────────────\n\n"
-            )
+    # ordenar por mejor edge
+    picks.sort(key=lambda x: x["edge"], reverse=True)
 
-        else:
+    report = "🏦 MLB V8.1 EDGE SYSTEM\n\n"
 
-            live_count += 1
+    for p in picks[:8]:
 
-            live_report += (
-                f"🔴 {away} vs {home} (LIVE)\n"
-                f"🏟 {game['away_pitcher']} vs {game['home_pitcher']}\n"
-                f"🎯 Pick: {pick}\n\n"
-                f"────────────────────\n\n"
-            )
+        g = p["game"]
 
-    final_msg = (
-        f"📊 MLB V8 LIVE SYSTEM\n"
-        f"🟢 PRE: {pre_count}\n"
-        f"🔴 LIVE: {live_count}\n\n"
-        + pre_report + "\n" + live_report
-    )
+        report += (
+            f"{'🔴' if p['state']=='LIVE' else '🟢'} {g['away_team']} vs {g['home_team']}\n"
+            f"🏟 {g['away_pitcher']} vs {g['home_pitcher']}\n"
+            f"🎯 Pick: {p['pick']}\n"
+            f"📊 Edge: {round(p['edge']*100,2)}%\n\n"
+            f"────────────────────\n\n"
+        )
 
-    send(final_msg)
-
-    print("✅ Enviado a Telegram")
+    send(report)
+    print("✅ Sent")
 
 if __name__ == "__main__":
     main()
