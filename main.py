@@ -10,8 +10,8 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
+ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 # =========================
 # TELEGRAM
@@ -27,7 +27,7 @@ def send(msg):
 # NORMALIZER
 # =========================
 
-def normalize_team(name):
+def normalize(name):
     return (
         name.lower()
         .replace("new york", "ny")
@@ -37,7 +37,7 @@ def normalize_team(name):
     )
 
 # =========================
-# MLB
+# MLB DATA
 # =========================
 
 def get_mlb_games():
@@ -53,26 +53,26 @@ def get_mlb_games():
     data = r.json()
     games = []
 
-    for date in data.get("dates", []):
-        for game in date.get("games", []):
+    for d in data.get("dates", []):
+        for g in d.get("games", []):
 
             games.append({
-                "id": game.get("gamePk"),
-                "gameDate": game.get("gameDate"),
-                "home_team": game["teams"]["home"]["team"]["name"],
-                "away_team": game["teams"]["away"]["team"]["name"],
-                "home_pitcher": game["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
-                "away_pitcher": game["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
-                "status": game.get("status", {}).get("detailedState", "")
+                "id": g.get("gamePk"),
+                "gameDate": g.get("gameDate"),
+                "home_team": g["teams"]["home"]["team"]["name"],
+                "away_team": g["teams"]["away"]["team"]["name"],
+                "home_pitcher": g["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
+                "away_pitcher": g["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
+                "status": g.get("status", {}).get("detailedState", "")
             })
 
     return games
 
 # =========================
-# ODDS
+# ODDS DATA
 # =========================
 
-def get_odds_games():
+def get_odds():
 
     r = requests.get(
         ODDS_URL,
@@ -87,28 +87,28 @@ def get_odds_games():
     return r.json() if r.status_code == 200 else []
 
 # =========================
-# MATCHING
+# MATCHING (NO DUPLICATES)
 # =========================
 
-def match_games(mlb_games, odds_games):
+def match_games(mlb, odds):
 
     matched = []
     used = set()
 
-    for m in mlb_games:
+    for m in mlb:
 
-        mh = normalize_team(m["home_team"])
-        ma = normalize_team(m["away_team"])
+        mh = normalize(m["home_team"])
+        ma = normalize(m["away_team"])
         key = f"{mh}_vs_{ma}"
 
-        for o in odds_games:
+        for o in odds:
 
-            oh = normalize_team(o["home_team"])
-            oa = normalize_team(o["away_team"])
-            okey1 = f"{oh}_vs_{oa}"
-            okey2 = f"{oa}_vs_{oh}"
+            oh = normalize(o["home_team"])
+            oa = normalize(o["away_team"])
+            k1 = f"{oh}_vs_{oa}"
+            k2 = f"{oa}_vs_{oh}"
 
-            if (key == okey1 or key == okey2) and key not in used:
+            if (key == k1 or key == k2) and key not in used:
 
                 matched.append({**m, "odds": o})
                 used.add(key)
@@ -125,7 +125,7 @@ def get_edge(game):
     try:
 
         book = game["odds"]["bookmakers"][0]
-        outcomes = book["markets"][0]["outcomes"]
+        outs = book["markets"][0]["outcomes"]
 
         home = game["home_team"]
         away = game["away_team"]
@@ -133,7 +133,7 @@ def get_edge(game):
         home_odds = None
         away_odds = None
 
-        for o in outcomes:
+        for o in outs:
             if o["name"] == home:
                 home_odds = o["price"]
             if o["name"] == away:
@@ -142,32 +142,27 @@ def get_edge(game):
         if not home_odds or not away_odds:
             return None
 
-        # implied probability
-        home_prob = 1 / home_odds
-        away_prob = 1 / away_odds
+        ph = 1 / home_odds
+        pa = 1 / away_odds
 
-        # normalize
-        total = home_prob + away_prob
-        home_prob /= total
-        away_prob /= total
+        total = ph + pa
+        ph /= total
+        pa /= total
 
-        # simple model bias (pitcher placeholder)
-        bias = 0.02 if game["home_pitcher"] != "UNKNOWN" else 0
+        # pequeño ajuste pitcher
+        if game["home_pitcher"] != "UNKNOWN":
+            ph += 0.01
 
-        home_prob += bias
-
-        if home_prob > away_prob:
-            edge = home_prob - away_prob
-            return game["home_team"], edge
+        if ph > pa:
+            return game["home_team"], ph - pa
         else:
-            edge = away_prob - home_prob
-            return game["away_team"], edge
+            return game["away_team"], pa - ph
 
     except:
         return None
 
 # =========================
-# FILTER (REAL BETTING WINDOW)
+# FILTER (BETTING WINDOW + LIVE)
 # =========================
 
 def classify(game):
@@ -202,17 +197,14 @@ def classify(game):
 
 def main():
 
-    print("🚀 V8.1 EDGE SYSTEM")
+    print("🚀 V8.1 CLEAN EDGE SYSTEM")
 
     mlb = get_mlb_games()
-    odds = get_odds_games()
+    odds = get_odds()
 
     games = match_games(mlb, odds)
 
     picks = []
-
-    live = 0
-    pre = 0
 
     for g in games:
 
@@ -226,7 +218,8 @@ def main():
 
         pick, edge = result
 
-        if edge < 0.03:  # 🔥 FILTRO VALUE REAL
+        # filtro de valor real
+        if edge < 0.03:
             continue
 
         picks.append({
@@ -236,12 +229,11 @@ def main():
             "state": state
         })
 
-    # ordenar por mejor edge
     picks.sort(key=lambda x: x["edge"], reverse=True)
 
-    report = "🏦 MLB V8.1 EDGE SYSTEM\n\n"
+    report = "🏦 MLB V8.1 CLEAN EDGE\n\n"
 
-    for p in picks[:8]:
+    for p in picks[:5]:
 
         g = p["game"]
 
@@ -253,8 +245,11 @@ def main():
             f"────────────────────\n\n"
         )
 
+    if not picks:
+        report += "⚠️ No value bets found today."
+
     send(report)
-    print("✅ Sent")
+    print("✅ DONE")
 
 if __name__ == "__main__":
     main()
