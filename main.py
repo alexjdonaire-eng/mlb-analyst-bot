@@ -4,6 +4,11 @@ from analyzer import run_analyzer
 
 print("🚀 BOT STARTED")
 
+run_collector()
+run_analyzer()
+
+print("✅ DONE")
+
 while True:
     try:
         run_collector()
