@@ -30,6 +30,7 @@ def send(msg):
 # =========================
 
 def get_games():
+
     r = requests.get(
         URL,
         params={
@@ -47,24 +48,25 @@ def get_games():
     return r.json()
 
 # =========================
-# FILTER TODAY (TEMPORAL)
+# FILTER TODAY (FIXED)
 # =========================
 
 def is_today(game):
 
     try:
 
-        game_time = datetime.fromisoformat(
+        game_date = datetime.fromisoformat(
             game["commence_time"].replace("Z", "+00:00")
-        )
+        ).date()
 
-        now = datetime.now(timezone.utc)
+        today_utc = datetime.now(timezone.utc).date()
 
-        hours_until = (game_time - now).total_seconds() / 3600
+        return game_date == today_utc
 
-        return -6 <= hours_until <= 24
+    except Exception as e:
 
-    except:
+        print("DATE FILTER ERROR:", e)
+
         return False
 
 # =========================
@@ -77,6 +79,7 @@ def pick_model(game):
     away = game["away_team"]
 
     try:
+
         book = game["bookmakers"][0]
         outcomes = book["markets"][0]["outcomes"]
 
@@ -98,8 +101,9 @@ def pick_model(game):
             else:
                 return away
 
-    except:
-        pass
+    except Exception as e:
+
+        print("MODEL ERROR:", e)
 
     return home
 
@@ -109,7 +113,7 @@ def pick_model(game):
 
 def main():
 
-    print("🚀 MLB FOUNDATION STABLE V7.2 DIAGNOSTIC")
+    print("🚀 MLB FOUNDATION STABLE V7.2")
 
     games = get_games()
 
