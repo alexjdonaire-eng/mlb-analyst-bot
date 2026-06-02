@@ -15,7 +15,11 @@ def send(msg):
 
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg}
+        json={
+            "chat_id": CHAT_ID,
+            "text": msg
+        },
+        timeout=20
     )
 
 # =========================
@@ -24,99 +28,59 @@ def send(msg):
 
 def load_history():
 
-    data = []
+    rows = []
 
     try:
+
         with open(HISTORY_FILE, "r") as f:
+
             for line in f:
-                data.append(json.loads(line))
+
+                try:
+                    rows.append(json.loads(line))
+                except:
+                    pass
+
     except:
         pass
 
-    return data
+    return rows
 
 # =========================
-# GROUP BY GAME
+# LATEST GAME SNAPSHOTS
 # =========================
 
-def group_by_game(history):
+def latest_games(history):
 
     games = {}
 
-    for h in history:
+    for row in history:
 
-        gid = h["game_id"]
+        gid = row.get("game_id")
 
-        if gid not in games:
-            games[gid] = []
+        if not gid:
+            continue
 
-        games[gid].append(h)
+        games[gid] = row
 
-    return games
-
-# =========================
-# CLV
-# =========================
-
-def clv(open_odds, close_odds, team):
-
-    try:
-        return (1 / close_odds[team]) - (1 / open_odds[team])
-    except:
-        return 0
+    return games.values()
 
 # =========================
-# STEAM
+# PICK WINNER
 # =========================
 
-def steam(open_odds, close_odds, team):
+def pick_winner(game):
 
-    try:
+    odds = game.get("odds", {})
 
-        move = (open_odds[team] - close_odds[team]) / open_odds[team]
-
-        if move > 0.03:
-            return "SHARP STEAM"
-        elif move > 0.015:
-            return "MODERATE STEAM"
-
+    if len(odds) < 2:
         return None
 
-    except:
-        return None
+    winner = min(odds, key=odds.get)
 
-# =========================
-# ANALYZE GAME
-# =========================
+    prob = round((1 / odds[winner]) * 100, 1)
 
-def analyze_game(history):
-
-    if len(history) < 2:
-        return None
-
-    open_odds = history[0]["odds"]
-    close_odds = history[-1]["odds"]
-
-    results = []
-
-    for team in close_odds.keys():
-
-        market_prob = 1 / close_odds[team]
-        model_prob = market_prob + 0.01
-
-        edge = model_prob - market_prob
-        clv_val = clv(open_odds, close_odds, team)
-        steam_val = steam(open_odds, close_odds, team)
-
-        results.append({
-            "team": team,
-            "edge": edge,
-            "clv": clv_val,
-            "steam": steam_val,
-            "score": (edge + clv_val) * 100
-        })
-
-    return results
+    return winner, prob
 
 # =========================
 # MAIN
@@ -125,40 +89,44 @@ def analyze_game(history):
 def main():
 
     history = load_history()
-    games = group_by_game(history)
 
-    all_results = []
+    games = latest_games(history)
 
-    for gid, h in games.items():
+    report = "🏦 MLB PREDICCIONES\n\n"
 
-        res = analyze_game(h)
+    total = 0
 
-        if not res:
+    for game in games:
+
+        away = game.get("away_team")
+        home = game.get("home_team")
+
+        result = pick_winner(game)
+
+        if not away or not home or not result:
             continue
 
-        for r in res:
-            all_results.append((gid, r))
-
-    all_results.sort(key=lambda x: x[1]["score"], reverse=True)
-
-    report = "🏦 MLB ANALYZER V11.9\n\n"
-
-    if not all_results:
-        report += "⚠️ No data yet. Espera más snapshots.\n"
-
-    for gid, r in all_results[:5]:
+        winner, prob = result
 
         report += (
-            f"🔥 SHARP SIGNAL\n"
-            f"🎯 Pick: {r['team']}\n"
-            f"📊 Edge: {round(r['edge']*100,2)}%\n"
-            f"📈 CLV: {round(r['clv']*100,2)}%\n"
-            f"🔥 Steam: {r['steam']}\n"
-            f"⭐ Score: {round(r['score'],2)}\n\n"
+            f"⚾ {away} vs {home}\n\n"
+            f"🎯 Ganador: {winner} ({prob}%)\n"
+            f"⭐ Mejor jugada: {winner}\n\n"
             f"────────────────────\n\n"
         )
 
+        total += 1
+
+    if total == 0:
+
+        report = (
+            "🏦 MLB PREDICCIONES\n\n"
+            "⚠️ No hay suficientes datos todavía.\n"
+            "Espera algunos snapshots más."
+        )
+
     send(report)
+
     print("✅ ANALYZER SENT")
 
 if __name__ == "__main__":
