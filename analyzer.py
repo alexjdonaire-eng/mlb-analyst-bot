@@ -1,27 +1,7 @@
-import os
 import json
-import requests
-import math
+import os
 
 HISTORY_FILE = "market_history.jsonl"
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-
-# =========================
-# TELEGRAM
-# =========================
-
-def send(msg):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg},
-            timeout=20
-        )
-    except:
-        pass
 
 
 # =========================
@@ -30,22 +10,19 @@ def send(msg):
 
 def load():
     rows = []
-    try:
-        with open(HISTORY_FILE, "r") as f:
-            for line in f:
-                try:
-                    r = json.loads(line)
-                    if "game_id" in r and "odds" in r:
-                        rows.append(r)
-                except:
-                    continue
-    except:
-        pass
+    with open(HISTORY_FILE, "r") as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+                if "game_id" in r and "odds" in r:
+                    rows.append(r)
+            except:
+                continue
     return rows
 
 
 # =========================
-# GROUP BY GAME
+# GROUP
 # =========================
 
 def group(rows):
@@ -60,7 +37,7 @@ def group(rows):
 
 
 # =========================
-# CLV CORE
+# CLV
 # =========================
 
 def clv(series):
@@ -70,149 +47,123 @@ def clv(series):
 
 
 # =========================
-# IMPROVED PROB MODEL
+# EDGE MODEL (same logic as live system)
 # =========================
 
-def model(series):
+def edge(series):
     if len(series) < 4:
         return 0
-    return 1 / (sum(series[-5:]) / len(series[-5:]))
+
+    avg = sum(series[-5:]) / len(series[-5:])
+    model = 1 / avg
+    implied = 1 / series[-1]
+
+    return model - implied
 
 
 # =========================
-# KELLY FRACTION (RISK ENGINE)
+# SIMULATED RETURN ENGINE
 # =========================
 
-def kelly(edge, odds):
-    if odds <= 1:
-        return 0
-    b = odds - 1
-    p = max(min(edge + (1 / odds), 0.99), 0.01)
-    q = 1 - p
-    return max((b * p - q) / b, 0)
+def simulate_trade(edge, clv_value):
 
+    # hedge fund assumption:
+    # CLV + edge predicts long term EV
 
-# =========================
-# SIGNAL ENGINE
-# =========================
+    expected_return = (edge * 100) + (clv_value * 80)
 
-def analyze(rows):
-
-    if len(rows) < 6:
-        return None
-
-    teams = rows[0]["odds"].keys()
-    signals = []
-
-    for team in teams:
-
-        series = [r["odds"][team] for r in rows if team in r["odds"]]
-
-        if len(series) < 6:
-            continue
-
-        open_odds = series[0]
-        close_odds = series[-1]
-
-        clv_val = clv(series)
-        model_p = model(series)
-
-        implied = 1 / close_odds if close_odds else 0
-
-        if model_p == 0:
-            continue
-
-        edge = model_p - implied
-
-        volatility = max(series) - min(series)
-
-        liquidity = abs(clv_val) + volatility * 0.3
-
-        # =========================
-        # EDGE QUALITY SCORE
-        # =========================
-        score = (edge * 120) + (clv_val * 100) + liquidity
-
-        # =========================
-        # STAKING (PORTFOLIO ENGINE)
-        # =========================
-        kelly_size = kelly(edge, close_odds)
-        stake = round(kelly_size * 100, 2)
-
-        # =========================
-        # FILTER INSTITUCIONAL
-        # =========================
-        if clv_val > 0.01 and edge > 0.015 and liquidity > 0.8:
-
-            signals.append({
-                "team": team,
-                "open": open_odds,
-                "close": close_odds,
-                "clv": clv_val,
-                "edge": edge,
-                "liquidity": liquidity,
-                "score": score,
-                "stake": stake
-            })
-
-    return signals
+    # normalize risk
+    if expected_return > 5:
+        return 1.2  # big win
+    elif expected_return > 2:
+        return 1.05
+    elif expected_return > 0:
+        return 1.01
+    elif expected_return > -2:
+        return 0.98
+    else:
+        return 0.95
 
 
 # =========================
-# MAIN DESK REPORT
+# BACKTEST ENGINE
 # =========================
 
-def main():
+def backtest():
 
     rows = load()
     games = group(rows)
 
-    ranked = []
+    bankroll = 1000
+    peak = bankroll
+    max_dd = 0
+
+    bets = 0
+    wins = 0
+
+    total_clv = 0
+    total_edge = 0
 
     for gid, rows in games.items():
 
-        signals = analyze(rows)
-
-        if not signals:
+        if len(rows) < 6:
             continue
 
-        game = rows[-1]
+        teams = rows[0]["odds"].keys()
 
-        text = f"🏦 {game['away_team']} vs {game['home_team']}\n\n"
+        for team in teams:
 
-        best = 0
+            series = [r["odds"][team] for r in rows if team in r["odds"]]
 
-        for s in signals:
+            if len(series) < 6:
+                continue
 
-            direction = "📉 smart steam" if s["clv"] > 0 else "📈 reverse move"
+            clv_value = clv(series)
+            e = edge(series)
 
-            text += (
-                f"🔥 {s['team']}\n"
-                f"{direction}\n"
-                f"Open → Close: {s['open']} → {s['close']}\n"
-                f"CLV: {round(s['clv']*100,2)}%\n"
-                f"Edge: {round(s['edge']*100,2)}%\n"
-                f"Liquidity: {round(s['liquidity'],2)}\n"
-                f"Stake (Kelly %): {s['stake']}%\n"
-                f"Score: {round(s['score'],2)}\n\n"
-            )
+            # filter hedge fund style
+            if clv_value < 0.005 or e < 0.005:
+                continue
 
-            best = max(best, s["score"])
+            ret = simulate_trade(e, clv_value)
 
-        ranked.append((best, text))
+            bankroll *= ret
 
-    ranked.sort(reverse=True, key=lambda x: x[0])
+            bets += 1
 
-    if not ranked:
-        report = "🏦 QUANT DESK\n\n⚠️ No institutional edges detected."
-    else:
-        report = "🏦 QUANT DESK - LIVE SIGNALS\n\n"
-        for _, text in ranked[:5]:
-            report += text + "────────────────────\n\n"
+            if ret > 1:
+                wins += 1
 
-    send(report)
-    print("QUANT DESK SENT")
+            total_clv += clv_value
+            total_edge += e
+
+            # drawdown tracking
+            if bankroll > peak:
+                peak = bankroll
+
+            dd = (peak - bankroll) / peak
+            max_dd = max(max_dd, dd)
+
+    # =========================
+    # REPORT
+    # =========================
+
+    if bets == 0:
+        print("NO VALID TRADES FOUND")
+        return
+
+    print("\n🏦 BACKTEST HEDGE FUND REPORT\n")
+
+    print("Bets:", bets)
+    print("Win rate (simulated):", round(wins / bets * 100, 2), "%")
+    print("Final bankroll:", round(bankroll, 2))
+    print("ROI:", round((bankroll - 1000) / 1000 * 100, 2), "%")
+
+    print("Avg CLV:", round(total_clv / bets, 4))
+    print("Avg Edge:", round(total_edge / bets, 4))
+
+    print("Max Drawdown:", round(max_dd * 100, 2), "%")
 
 
 if __name__ == "__main__":
-    main()
+    backtest()
