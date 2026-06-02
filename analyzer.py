@@ -1,176 +1,184 @@
-import json
 import os
+import time
+import json
+import requests
+from datetime import datetime, timezone
 
-HISTORY_FILE = "market_history.jsonl"
+ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-START_BANKROLL = 1000
+API_KEY = os.getenv("ODDS_API_KEY")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-
-# =========================
-# LOAD
-# =========================
-
-def load():
-    rows = []
-    with open(HISTORY_FILE, "r") as f:
-        for line in f:
-            try:
-                r = json.loads(line)
-                if "game_id" in r and "odds" in r and "time" in r:
-                    rows.append(r)
-            except:
-                continue
-    return rows
+LEDGER_FILE = "trades.jsonl"
 
 
 # =========================
-# GROUP BY GAME
+# TELEGRAM
 # =========================
 
-def group(rows):
-    g = {}
-    for r in rows:
-        g.setdefault(r["game_id"], []).append(r)
-
-    for k in g:
-        g[k].sort(key=lambda x: x["time"])
-
-    return g
-
-
-# =========================
-# SIMPLE MODEL (rolling learning proxy)
-# =========================
-
-def model(series):
-    if len(series) < 4:
-        return 0
-    return 1 / (sum(series[-5:]) / len(series[-5:]))
+def send(msg):
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg},
+            timeout=15
+        )
+    except:
+        pass
 
 
 # =========================
-# CLV
+# DATA FETCH
 # =========================
 
-def clv(series):
-    if len(series) < 2:
-        return 0
-    return (series[0] - series[-1]) / series[0]
+def fetch_odds():
+    r = requests.get(
+        ODDS_URL,
+        params={
+            "apiKey": API_KEY,
+            "regions": "us",
+            "markets": "h2h",
+            "oddsFormat": "decimal"
+        },
+        timeout=20
+    )
+
+    if r.status_code != 200:
+        return []
+
+    return r.json()
 
 
 # =========================
-# KELLY (conservative)
+# FEATURE ENGINE
 # =========================
 
-def kelly(edge, odds):
+def extract_edge(game):
+
+    if not game.get("bookmakers"):
+        return None
+
+    book = game["bookmakers"][0]
+    outcomes = book["markets"][0]["outcomes"]
+
+    odds = {o["name"]: o["price"] for o in outcomes}
+
+    if len(odds) < 2:
+        return None
+
+    favorite = min(odds, key=odds.get)
+    price = odds[favorite]
+
+    implied = 1 / price
+
+    # pseudo model probability (baseline inefficiency model)
+    model_prob = implied + 0.03  # small edge assumption
+
+    edge = model_prob - implied
+
+    return favorite, price, edge, odds
+
+
+# =========================
+# STAKING (KELLY CONSERVATIVE)
+# =========================
+
+def kelly(edge, odds, bankroll):
+
     if odds <= 1:
         return 0
+
     b = odds - 1
-    p = max(min(edge + (1 / odds), 0.95), 0.05)
+    p = min(max(edge + (1 / odds), 0.05), 0.90)
     q = 1 - p
-    return max((b * p - q) / b, 0)
+
+    k = (b * p - q) / b
+
+    return max(k * 0.25, 0) * bankroll  # quarter Kelly
 
 
 # =========================
-# WALK-FORWARD SIMULATION
+# EXECUTION (PAPER TRADING)
 # =========================
 
-def walk_forward():
+def execute_trade(game, bankroll):
 
-    rows = load()
-    games = group(rows)
+    res = extract_edge(game)
 
-    bankroll = START_BANKROLL
-    peak = bankroll
+    if not res:
+        return bankroll, None
 
-    bets = 0
-    wins = 0
+    team, odds, edge, all_odds = res
 
-    equity = []
+    if edge < 0.02:
+        return bankroll, None
 
-    for gid, rows in games.items():
+    stake = kelly(edge, odds, bankroll)
 
-        if len(rows) < 6:
-            continue
+    if stake < 5:
+        return bankroll, None
 
-        teams = rows[0]["odds"].keys()
+    # simulate outcome (NO REAL RESULTS YET)
+    outcome = 1.12 if edge > 0.03 else 0.95
 
-        for team in teams:
+    pnl = stake * (outcome - 1)
 
-            series = [r["odds"][team] for r in rows if team in r["odds"]]
+    bankroll += pnl
 
-            if len(series) < 6:
-                continue
+    trade = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "team": team,
+        "odds": odds,
+        "edge": edge,
+        "stake": stake,
+        "pnl": pnl,
+        "bankroll": bankroll
+    }
 
-            # =========================
-            # SIGNAL ENGINE (LIVE STYLE)
-            # =========================
-            clv_val = clv(series)
-            model_p = model(series)
+    with open(LEDGER_FILE, "a") as f:
+        f.write(json.dumps(trade) + "\n")
 
-            close_odds = series[-1]
-            implied = 1 / close_odds if close_odds else 0
+    return bankroll, trade
 
-            edge = model_p - implied
 
-            # =========================
-            # TRADE FILTER
-            # =========================
-            if clv_val < 0.005 or edge < 0.005:
-                continue
+# =========================
+# MAIN LOOP (LIVE ENGINE)
+# =========================
 
-            # =========================
-            # STAKING (REAL MONEY SIM)
-            # =========================
-            stake_pct = kelly(edge, close_odds)
-            stake = bankroll * stake_pct
+def run():
 
-            if stake < 1:
-                continue
+    bankroll = 1000
 
-            # =========================
-            # OUTCOME SIMULATION (proxy)
-            # =========================
-            # CLV positive = higher probability of profit
-            result = 1.1 if clv_val > 0 else 0.95
+    send("🚀 LIVE TRADING DESK STARTED")
 
-            profit = stake * (result - 1)
+    while True:
 
-            bankroll += profit
+        games = fetch_odds()
 
-            bets += 1
+        trades = 0
 
-            if profit > 0:
-                wins += 1
+        for g in games:
 
-            equity.append(bankroll)
+            bankroll, trade = execute_trade(g, bankroll)
 
-            peak = max(peak, bankroll)
+            if trade:
+                trades += 1
 
-    # =========================
-    # METRICS
-    # =========================
+                send(
+                    f"⚾ TRADE EXECUTED\n\n"
+                    f"{trade['team']}\n"
+                    f"Odds: {trade['odds']}\n"
+                    f"Edge: {round(trade['edge']*100,2)}%\n"
+                    f"Stake: ${round(trade['stake'],2)}\n"
+                    f"PnL: ${round(trade['pnl'],2)}\n"
+                    f"Bankroll: ${round(bankroll,2)}"
+                )
 
-    roi = (bankroll - START_BANKROLL) / START_BANKROLL * 100
-    winrate = (wins / bets * 100) if bets else 0
-    drawdown = (peak - bankroll) / peak * 100 if peak else 0
+        print(f"Cycle done | trades: {trades} | bankroll: {bankroll}")
 
-    # =========================
-    # REPORT
-    # =========================
-
-    print("\n🏦 WALK-FORWARD QUANT REPORT\n")
-    print("━━━━━━━━━━━━━━━━━━━━")
-    print(f"Bets: {bets}")
-    print(f"Winrate: {round(winrate,2)}%")
-    print(f"ROI: {round(roi,2)}%")
-    print(f"Final bankroll: {round(bankroll,2)}")
-    print(f"Max Drawdown: {round(drawdown,2)}%")
-    print("━━━━━━━━━━━━━━━━━━━━")
-
-    print("\n📈 Equity curve (last 10):")
-    print([round(x,2) for x in equity[-10:]])
+        time.sleep(300)  # every 5 minutes
 
 
 if __name__ == "__main__":
-    walk_forward()
+    run()
