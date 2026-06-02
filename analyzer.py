@@ -12,13 +12,9 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # =========================
 
 def send(msg):
-
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={
-            "chat_id": CHAT_ID,
-            "text": msg
-        },
+        json={"chat_id": CHAT_ID, "text": msg},
         timeout=20
     )
 
@@ -27,64 +23,58 @@ def send(msg):
 # =========================
 
 def load_history():
-
     rows = []
-
     try:
-
         with open(HISTORY_FILE, "r") as f:
-
             for line in f:
-
                 try:
                     rows.append(json.loads(line))
                 except:
                     pass
-
     except:
         pass
-
     return rows
 
 # =========================
-# LATEST GAME SNAPSHOTS
+# GROUP BY GAME
 # =========================
 
-def latest_games(history):
-
+def group_games(history):
     games = {}
 
-    for row in reversed(history):
-
-        away = row.get("away_team")
-        home = row.get("home_team")
-
-        if not away or not home:
+    for row in history:
+        gid = row.get("game_id")
+        if not gid:
             continue
 
-        key = f"{away}_{home}"
+        if gid not in games:
+            games[gid] = []
+        games[gid].append(row)
 
-        if key not in games:
-            games[key] = row
-
-    return list(games.values())
+    return games
 
 # =========================
-# PICK WINNER
+# GET FIRST AND LAST SNAPSHOT
 # =========================
 
-def pick_winner(game):
-
-    odds = game.get("odds", {})
-
-    if len(odds) < 2:
+def get_movement(game_rows):
+    if len(game_rows) < 2:
         return None
 
-    winner = min(odds, key=odds.get)
+    first = game_rows[0]
+    last = game_rows[-1]
 
-    prob = round((1 / odds[winner]) * 100, 1)
+    movement = []
 
-    return winner, prob
+    for team in first["odds"].keys():
+        if team in last["odds"]:
+            old = first["odds"][team]
+            new = last["odds"][team]
+
+            diff = round(new - old, 3)
+            movement.append((team, old, new, diff))
+
+    return movement
 
 # =========================
 # MAIN
@@ -93,78 +83,57 @@ def pick_winner(game):
 def main():
 
     history = load_history()
+    games = group_games(history)
 
-    games = list(latest_games(history))
+    report = "📈 MOVIMIENTO DE CUOTAS MLB\n\n"
 
-    picks = []
+    detected = 0
 
-    for game in games:
+    for game_id, rows in games.items():
 
-        result = pick_winner(game)
+        movement = get_movement(rows)
 
-        if not result:
+        if not movement:
             continue
 
-        winner, prob = result
+        away = rows[-1].get("away_team")
+        home = rows[-1].get("home_team")
 
-        picks.append({
-            "game": game,
-            "winner": winner,
-            "prob": prob
-        })
+        text = f"⚾ {away} vs {home}\n\n"
 
-    picks.sort(key=lambda x: x["prob"], reverse=True)
+        has_movement = False
 
-    report = "🔥 TOP 3 PICKS DEL DÍA\n\n"
+        for team, old, new, diff in movement:
 
-    for i, pick in enumerate(picks[:3], start=1):
-        report += (
-            f"{i}️⃣ {pick['winner']} ({pick['prob']}%)\n"
-        )
+            if abs(diff) < 0.05:
+                continue
 
-    report += "\n━━━━━━━━━━━━━━━━\n\n"
-    report += "🏦 MLB PREDICCIONES\n\n"
+            has_movement = True
 
-    total = 0
+            if diff < 0:
+                direction = "📉 dinero entrando"
+            else:
+                direction = "📈 dinero saliendo"
 
-    for pick in picks:
+            text += (
+                f"{team}\n"
+                f"{old} → {new}\n"
+                f"{direction}\n\n"
+            )
 
-        game = pick["game"]
+        if has_movement:
+            report += text + "────────────────────\n\n"
+            detected += 1
 
-        away = game.get("away_team")
-        home = game.get("home_team")
-
-        winner = pick["winner"]
-        prob = pick["prob"]
-
-        if prob >= 65:
-            confidence = "🔥 ALTA"
-        elif prob >= 58:
-            confidence = "✅ MEDIA"
-        else:
-            confidence = "⚠️ BAJA"
-
-        report += (
-            f"⚾ {away} vs {home}\n\n"
-            f"🎯 Ganador: {winner} ({prob}%)\n"
-            f"📊 Confianza: {confidence}\n"
-            f"⭐ Mejor jugada: {winner}\n\n"
-            f"────────────────────\n\n"
-        )
-
-        total += 1
-
-    if total == 0:
-
+    if detected == 0:
         report = (
-            "🏦 MLB PREDICCIONES\n\n"
-            "⚠️ No hay suficientes datos todavía.\n"
-            "Espera algunos snapshots más."
+            "📈 MOVIMIENTO DE CUOTAS MLB\n\n"
+            "⚠️ No hay movimientos significativos todavía."
         )
 
     send(report)
+    print("✅ MOVEMENT ANALYZER SENT")
 
-    print("✅ ANALYZER SENT")
 
 if __name__ == "__main__":
     main()
