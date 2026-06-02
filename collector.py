@@ -75,7 +75,7 @@ def save_snapshot(game_id, odds):
 
 def main():
 
-    print("COLLECTOR STARTED")
+    print("🚨 COLLECTOR VISIBLE TEST 🚨")
 
     odds = get_odds()
 
