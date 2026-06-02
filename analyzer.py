@@ -56,13 +56,16 @@ def latest_games(history):
 
     for row in reversed(history):
 
-        gid = row.get("game_id")
+        away = row.get("away_team")
+        home = row.get("home_team")
 
-        if not gid:
+        if not away or not home:
             continue
 
-        if gid not in games:
-            games[gid] = row
+        key = f"{away}_{home}"
+
+        if key not in games:
+            games[key] = row
 
     return list(games.values())
 
