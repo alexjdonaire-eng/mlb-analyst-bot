@@ -73,22 +73,18 @@ def latest_games(history):
 # PICK WINNER
 # =========================
 
-winner, prob = result
+def pick_winner(game):
 
-if prob >= 65:
-    confidence = "🔥 ALTA"
-elif prob >= 58:
-    confidence = "✅ MEDIA"
-else:
-    confidence = "⚠️ BAJA"
+    odds = game.get("odds", {})
 
-report += (
-    f"⚾ {away} vs {home}\n\n"
-    f"🎯 Ganador: {winner} ({prob}%)\n"
-    f"📊 Confianza: {confidence}\n"
-    f"⭐ Mejor jugada: {winner}\n\n"
-    f"────────────────────\n\n"
-)
+    if len(odds) < 2:
+        return None
+
+    winner = min(odds, key=odds.get)
+
+    prob = round((1 / odds[winner]) * 100, 1)
+
+    return winner, prob
 
 # =========================
 # MAIN
@@ -101,15 +97,6 @@ def main():
     games = list(latest_games(history))
 
     print("TOTAL GAMES:", len(games))
-
-    for g in games:
-        print(
-            g.get("away_team"),
-            "vs",
-            g.get("home_team"),
-            "|",
-            g.get("game_id")
-        )
 
     report = "🏦 MLB PREDICCIONES\n\n"
 
@@ -127,9 +114,17 @@ def main():
 
         winner, prob = result
 
+        if prob >= 65:
+            confidence = "🔥 ALTA"
+        elif prob >= 58:
+            confidence = "✅ MEDIA"
+        else:
+            confidence = "⚠️ BAJA"
+
         report += (
             f"⚾ {away} vs {home}\n\n"
             f"🎯 Ganador: {winner} ({prob}%)\n"
+            f"📊 Confianza: {confidence}\n"
             f"⭐ Mejor jugada: {winner}\n\n"
             f"────────────────────\n\n"
         )
