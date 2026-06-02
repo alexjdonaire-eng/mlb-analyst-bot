@@ -7,9 +7,6 @@ HISTORY_FILE = "market_history.jsonl"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# =========================
-# TELEGRAM
-# =========================
 
 def send(msg):
     requests.post(
@@ -18,9 +15,6 @@ def send(msg):
         timeout=20
     )
 
-# =========================
-# LOAD HISTORY
-# =========================
 
 def load_history():
     rows = []
@@ -35,104 +29,88 @@ def load_history():
         pass
     return rows
 
-# =========================
-# GROUP BY GAME
-# =========================
 
 def group_games(history):
     games = {}
-
-    for row in history:
-        gid = row.get("game_id")
-        if not gid:
-            continue
-
-        if gid not in games:
-            games[gid] = []
-        games[gid].append(row)
-
+    for r in history:
+        games.setdefault(r["game_id"], []).append(r)
     return games
 
-# =========================
-# GET FIRST AND LAST SNAPSHOT
-# =========================
 
-def get_movement(game_rows):
-    if len(game_rows) < 2:
+def analyze_game(rows):
+
+    rows.sort(key=lambda x: x["time"])
+
+    if len(rows) < 3:
         return None
 
-    first = game_rows[0]
-    last = game_rows[-1]
+    signals = []
 
-    movement = []
+    # tomamos evolución por equipo
+    teams = rows[0]["odds"].keys()
 
-    for team in first["odds"].keys():
-        if team in last["odds"]:
-            old = first["odds"][team]
-            new = last["odds"][team]
+    for team in teams:
 
-            diff = round(new - old, 3)
-            movement.append((team, old, new, diff))
+        prices = []
 
-    return movement
+        for r in rows:
+            if team in r["odds"]:
+                prices.append(r["odds"][team])
 
-# =========================
-# MAIN
-# =========================
+        if len(prices) < 3:
+            continue
+
+        start = prices[0]
+        end = prices[-1]
+
+        change = end - start
+
+        # volatilidad (movimiento total)
+        volatility = max(prices) - min(prices)
+
+        # sharp conditions
+        if change < -0.15 and volatility > 0.20:
+            signals.append((team, start, end, change, volatility))
+
+    return signals
+
 
 def main():
 
     history = load_history()
     games = group_games(history)
 
-    report = "📈 MOVIMIENTO DE CUOTAS MLB\n\n"
+    report = "🔥 SHARP MONEY DETECTOR MLB\n\n"
 
-    detected = 0
+    found = 0
 
-    for game_id, rows in games.items():
+    for gid, rows in games.items():
 
-        movement = get_movement(rows)
+        signals = analyze_game(rows)
 
-        if not movement:
+        if not signals:
             continue
 
-        away = rows[-1].get("away_team")
-        home = rows[-1].get("home_team")
+        game = rows[-1]
+        text = f"⚾ {game['away_team']} vs {game['home_team']}\n\n"
 
-        text = f"⚾ {away} vs {home}\n\n"
-
-        has_movement = False
-
-        for team, old, new, diff in movement:
-
-            if abs(diff) < 0.05:
-                continue
-
-            has_movement = True
-
-            if diff < 0:
-                direction = "📉 dinero entrando"
-            else:
-                direction = "📈 dinero saliendo"
+        for team, start, end, change, vol in signals:
 
             text += (
-                f"{team}\n"
-                f"{old} → {new}\n"
-                f"{direction}\n\n"
+                f"🔥 {team}\n"
+                f"{start} → {end}\n"
+                f"Movimiento: {round(change, 3)}\n"
+                f"Volatilidad: {round(vol, 3)}\n\n"
             )
 
-        if has_movement:
-            report += text + "────────────────────\n\n"
-            detected += 1
+        report += text + "────────────────────\n\n"
+        found += 1
 
-    if detected == 0:
-        report = (
-            "📈 MOVIMIENTO DE CUOTAS MLB\n\n"
-            "⚠️ No hay movimientos significativos todavía."
-        )
+    if found == 0:
+        report = "🔥 SHARP MONEY DETECTOR MLB\n\n⚠️ Sin movimientos institucionales detectados."
 
     send(report)
-    print("✅ MOVEMENT ANALYZER SENT")
+    print("SHARP ANALYZER SENT")
 
 
 if __name__ == "__main__":
