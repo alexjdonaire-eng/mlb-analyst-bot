@@ -1,72 +1,73 @@
 import os
 import json
 import requests
-from datetime import datetime
-
-ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-API_KEY = os.getenv("ODDS_API_KEY")
 
 HISTORY_FILE = "market_history.jsonl"
 
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 # =========================
-# GET ODDS
+# TELEGRAM
 # =========================
 
-def get_odds():
+def send(msg):
 
-    r = requests.get(
-        ODDS_URL,
-        params={
-            "apiKey": API_KEY,
-            "regions": "us",
-            "markets": "h2h",
-            "oddsFormat": "decimal"
+    print("TOKEN:", TOKEN)
+    print("CHAT_ID:", CHAT_ID)
+
+    if not TOKEN:
+        print("ERROR: TELEGRAM_BOT_TOKEN no encontrado")
+        return
+
+    if not CHAT_ID:
+        print("ERROR: TELEGRAM_CHAT_ID no encontrado")
+        return
+
+    r = requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={
+            "chat_id": CHAT_ID,
+            "text": msg
         }
     )
 
-    return r.json() if r.status_code == 200 else []
+    print("Telegram status:", r.status_code)
+    print("Telegram response:", r.text)
 
 # =========================
-# SAVE SNAPSHOT
+# LOAD HISTORY
 # =========================
 
-def save_snapshot(game_id, odds):
+def load_history():
 
-    data = {
-        "time": datetime.utcnow().isoformat(),
-        "game_id": game_id,
-        "odds": odds
-    }
+    data = []
 
-    with open(HISTORY_FILE, "a") as f:
-        f.write(json.dumps(data) + "\n")
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            for line in f:
+                data.append(json.loads(line))
+    except Exception as e:
+        print("History error:", e)
+
+    return data
 
 # =========================
-# COLLECT
+# MAIN
 # =========================
 
 def main():
 
-    odds = get_odds()
+    history = load_history()
 
-    for game in odds:
+    report = (
+        "🏦 MLB ANALYZER\n\n"
+        f"Snapshots encontrados: {len(history)}\n"
+    )
 
-        try:
+    send(report)
 
-            book = game["bookmakers"][0]
-            outs = book["markets"][0]["outcomes"]
-
-            current = {}
-
-            for o in outs:
-                current[o["name"]] = o["price"]
-
-            save_snapshot(game["id"], current)
-
-            print("saved:", game["away_team"], "vs", game["home_team"])
-
-        except:
-            continue
+    print("ANALYZER FINISHED")
 
 if __name__ == "__main__":
     main()
