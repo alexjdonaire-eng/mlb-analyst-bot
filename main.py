@@ -1,7 +1,10 @@
 import os
 import requests
-import json
 from datetime import datetime
+
+# =========================
+# CONFIG
+# =========================
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -9,6 +12,22 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
+# =========================
+# TELEGRAM
+# =========================
+
+def send(msg):
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={
+            "chat_id": CHAT_ID,
+            "text": msg
+        }
+    )
+
+# =========================
+# DATA FETCH
+# =========================
 
 def get_games():
     r = requests.get(
@@ -21,28 +40,112 @@ def get_games():
         }
     )
 
-    print("STATUS:", r.status_code)
-
     if r.status_code != 200:
-        print("ERROR RESPONSE:", r.text)
+        print("ERROR:", r.text)
         return []
 
     return r.json()
 
+# =========================
+# FILTER TODAY
+# =========================
+
+def is_today(game):
+    try:
+        game_date = game["commence_time"][:10]
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        return game_date == today
+    except:
+        return False
+
+# =========================
+# SIMPLE MODEL
+# =========================
+
+def pick_model(game):
+
+    home = game["home_team"]
+    away = game["away_team"]
+
+    try:
+        book = game["bookmakers"][0]
+        outcomes = book["markets"][0]["outcomes"]
+
+        home_odds = None
+        away_odds = None
+
+        for o in outcomes:
+
+            if o["name"] == home:
+                home_odds = o["price"]
+
+            if o["name"] == away:
+                away_odds = o["price"]
+
+        if home_odds and away_odds:
+
+            if home_odds <= away_odds:
+                return home
+            else:
+                return away
+
+    except:
+        pass
+
+    return home
+
+# =========================
+# MAIN
+# =========================
 
 def main():
-    print("🚀 MLB DIAGNOSTIC MODE")
+
+    print("🚀 MLB FOUNDATION STABLE V7.2")
 
     games = get_games()
 
-    print("TOTAL GAMES:", len(games))
+    report = "🏦 MLB QUANT ALERT\n\n"
 
-    if len(games) > 0:
-        print("FIRST GAME:")
-        print(json.dumps(games[0], indent=2))
+    total_games = 0
 
-    print("FINISHED")
+    seen_games = set()
 
+    for game in games:
+
+        if not is_today(game):
+            continue
+
+        game_id = game.get("id")
+
+        if not game_id:
+            continue
+
+        if game_id in seen_games:
+            continue
+
+        seen_games.add(game_id)
+
+        away = game["away_team"]
+        home = game["home_team"]
+
+        pick = pick_model(game)
+
+        total_games += 1
+
+        report += (
+            f"⚾ {away} vs {home}\n\n"
+            f"🎯 Ganador: {pick}\n\n"
+            f"────────────────────\n\n"
+        )
+
+    report = (
+        f"📊 Juegos encontrados: {total_games}\n\n"
+        + report
+    )
+
+    send(report)
+
+    print("✅ Reporte enviado")
 
 if __name__ == "__main__":
     main()
