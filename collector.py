@@ -21,9 +21,6 @@ HISTORY_FILE = "market_history.jsonl"
 
 def send_telegram(msg):
 
-    print("TOKEN EXISTS:", bool(TOKEN))
-    print("CHAT_ID EXISTS:", bool(CHAT_ID))
-
     try:
 
         r = requests.post(
@@ -36,7 +33,6 @@ def send_telegram(msg):
         )
 
         print("TELEGRAM STATUS:", r.status_code)
-        print("TELEGRAM RESPONSE:", r.text)
 
     except Exception as e:
 
@@ -78,16 +74,31 @@ def get_odds():
 # SAVE SNAPSHOT
 # =========================
 
-def save_snapshot(game_id, odds):
+def save_snapshot(game):
 
     snapshot = {
         "time": datetime.now(UTC).isoformat(),
-        "game_id": game_id,
-        "odds": odds
+        "game_id": game["id"],
+        "home_team": game["home_team"],
+        "away_team": game["away_team"],
+        "commence_time": game.get("commence_time"),
+        "odds": {}
     }
 
-    with open(HISTORY_FILE, "a") as f:
-        f.write(json.dumps(snapshot) + "\n")
+    try:
+
+        book = game["bookmakers"][0]
+        outs = book["markets"][0]["outcomes"]
+
+        for o in outs:
+            snapshot["odds"][o["name"]] = o["price"]
+
+        with open(HISTORY_FILE, "a") as f:
+            f.write(json.dumps(snapshot) + "\n")
+
+    except Exception as e:
+
+        print("SAVE ERROR:", e)
 
 # =========================
 # MAIN
@@ -95,7 +106,7 @@ def save_snapshot(game_id, odds):
 
 def main():
 
-    print("🚨 COLLECTOR VISIBLE TEST 🚨")
+    print("🚨 COLLECTOR STARTED")
 
     odds = get_odds()
 
@@ -115,14 +126,7 @@ def main():
             if not book.get("markets"):
                 continue
 
-            outs = book["markets"][0]["outcomes"]
-
-            current = {}
-
-            for o in outs:
-                current[o["name"]] = o["price"]
-
-            save_snapshot(game["id"], current)
+            save_snapshot(game)
 
             print(
                 f"SAVED: {game['away_team']} vs {game['home_team']}"
@@ -139,6 +143,10 @@ def main():
     )
 
     print("FINISHED")
+
+# =========================
+# RUN
+# =========================
 
 if __name__ == "__main__":
     main()
