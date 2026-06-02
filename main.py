@@ -1,9 +1,9 @@
-from collector import run_collector
-from analyzer import run_analyzer
+import collector
+import analyzer
 
 print("🚀 BOT STARTED")
 
-run_collector()
-run_analyzer()
+collector.main()
+analyzer.main()
 
 print("DONE")
