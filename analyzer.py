@@ -13,11 +13,14 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # =========================
 
 def send(msg):
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg},
-        timeout=20
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg},
+            timeout=20
+        )
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
 
 
 # =========================
@@ -38,15 +41,21 @@ def load_history():
     return rows
 
 
+# =========================
+# GROUP BY GAME
+# =========================
+
 def group_games(history):
     games = {}
     for r in history:
-        games.setdefault(r["game_id"], []).append(r)
+        gid = r.get("game_id")
+        if gid:
+            games.setdefault(gid, []).append(r)
     return games
 
 
 # =========================
-# VALUE MODEL
+# MODEL PROBABILITY (simple baseline)
 # =========================
 
 def model_probability(series):
@@ -55,7 +64,7 @@ def model_probability(series):
 
 
 # =========================
-# GAME ANALYSIS ENGINE
+# ANALYSIS ENGINE
 # =========================
 
 def analyze_game(rows):
@@ -66,7 +75,6 @@ def analyze_game(rows):
         return None
 
     teams = rows[0]["odds"].keys()
-
     results = []
 
     for team in teams:
@@ -94,19 +102,19 @@ def analyze_game(rows):
         consistency = drops / (len(series) - 1)
 
         # =========================
-        # VALUE
+        # VALUE BETTING
         # =========================
         implied = 1 / end
         model = model_probability(series)
         value = model - implied
 
         # =========================
-        # SHARP MONEY SCORE
+        # SHARP SCORE
         # =========================
         sharp_score = (abs(change) * 2) + volatility + (consistency * 0.5)
 
         # =========================
-        # FINAL SCORE (PRO COMBINATION)
+        # FINAL SCORE
         # =========================
         final_score = (
             (value * 100) * 0.5 +
@@ -114,8 +122,8 @@ def analyze_game(rows):
             (consistency * 10)
         )
 
-        # FILTRO PRO
-        if value > 0.04 and sharp_score > 0.25 and consistency > 0.55:
+        # FILTRO (ajustado para que SÍ salga info)
+        if value > 0.01:
 
             results.append({
                 "team": team,
@@ -142,8 +150,9 @@ def main():
     history = load_history()
     games = group_games(history)
 
-    report = "🏆 SISTEMA FINAL - MLB BETTING ENGINE\n\n"
+    print("GAMES:", len(games))
 
+    report = "🏆 SISTEMA FINAL - MLB BETTING ENGINE\n\n"
     ranked = []
 
     for gid, rows in games.items():
@@ -181,11 +190,11 @@ def main():
 
     ranked.sort(reverse=True, key=lambda x: x[0])
 
+    print("RANKED:", len(ranked))
+
     if not ranked:
         report = "🏆 SISTEMA FINAL - MLB BETTING ENGINE\n\n⚠️ Sin oportunidades de valor detectadas."
     else:
-        report = "🏆 SISTEMA FINAL - MLB BETTING ENGINE\n\n"
-
         for _, text in ranked[:5]:
             report += text + "────────────────────\n\n"
 
