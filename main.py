@@ -1,8 +1,6 @@
 import os
 import requests
-import sqlite3
-import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # =========================
 # CONFIG
@@ -12,25 +10,8 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
+MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-
-# =========================
-# DB SETUP
-# =========================
-
-conn = sqlite3.connect("odds.db")
-cur = conn.cursor()
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS odds_snapshots (
-    game_id TEXT,
-    team TEXT,
-    price REAL,
-    timestamp INTEGER
-)
-""")
-
-conn.commit()
 
 # =========================
 # TELEGRAM
@@ -43,10 +24,55 @@ def send(msg):
     )
 
 # =========================
-# FETCH ODDS
+# NORMALIZER
 # =========================
 
-def fetch_odds():
+def normalize(name):
+    return (
+        name.lower()
+        .replace("new york", "ny")
+        .replace("los angeles", "la")
+        .replace("st. louis", "st louis")
+        .replace(" ", "")
+    )
+
+# =========================
+# MLB DATA
+# =========================
+
+def get_mlb_games():
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    url = f"{MLB_URL}?sportId=1&date={today}&hydrate=probablePitcher"
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        return []
+
+    data = r.json()
+    games = []
+
+    for d in data.get("dates", []):
+        for g in d.get("games", []):
+
+            games.append({
+                "id": g.get("gamePk"),
+                "gameDate": g.get("gameDate"),
+                "home_team": g["teams"]["home"]["team"]["name"],
+                "away_team": g["teams"]["away"]["team"]["name"],
+                "home_pitcher": g["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
+                "away_pitcher": g["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
+                "status": g.get("status", {}).get("detailedState", "")
+            })
+
+    return games
+
+# =========================
+# ODDS DATA
+# =========================
+
+def get_odds():
 
     r = requests.get(
         ODDS_URL,
@@ -61,133 +87,215 @@ def fetch_odds():
     return r.json() if r.status_code == 200 else []
 
 # =========================
-# STORE SNAPSHOT
+# MATCHING
 # =========================
 
-def store_snapshot(game_id, team, price):
+def match_games(mlb, odds):
 
-    cur.execute("""
-        INSERT INTO odds_snapshots VALUES (?, ?, ?, ?)
-    """, (game_id, team, price, int(time.time())))
+    matched = []
+    used = set()
 
-    conn.commit()
+    for m in mlb:
 
-# =========================
-# GET OPEN PRICE (CLV BASE)
-# =========================
+        mh = normalize(m["home_team"])
+        ma = normalize(m["away_team"])
+        key = f"{mh}_vs_{ma}"
 
-def get_open_price(game_id, team):
+        for o in odds:
 
-    cur.execute("""
-        SELECT price FROM odds_snapshots
-        WHERE game_id=? AND team=?
-        ORDER BY timestamp ASC
-        LIMIT 1
-    """, (game_id, team))
+            oh = normalize(o["home_team"])
+            oa = normalize(o["away_team"])
 
-    row = cur.fetchone()
+            k1 = f"{oh}_vs_{oa}"
+            k2 = f"{oa}_vs_{oh}"
 
-    return row[0] if row else None
+            if (key == k1 or key == k2) and key not in used:
 
-# =========================
-# GET LATEST PRICE
-# =========================
+                matched.append({**m, "odds": o})
+                used.add(key)
+                break
 
-def get_latest_price(game_id, team):
-
-    cur.execute("""
-        SELECT price FROM odds_snapshots
-        WHERE game_id=? AND team=?
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """, (game_id, team))
-
-    row = cur.fetchone()
-
-    return row[0] if row else None
+    return matched
 
 # =========================
-# STEAM SCORE
+# EDGE CALC
 # =========================
 
-def steam_score(open_price, current_price):
+def get_edge(game):
 
-    if not open_price or not current_price:
-        return 0
+    try:
 
-    return open_price - current_price
+        book = game["odds"]["bookmakers"][0]
+        outs = book["markets"][0]["outcomes"]
+
+        home = game["home_team"]
+        away = game["away_team"]
+
+        home_odds = None
+        away_odds = None
+
+        for o in outs:
+            if o["name"] == home:
+                home_odds = o["price"]
+            if o["name"] == away:
+                away_odds = o["price"]
+
+        if not home_odds or not away_odds:
+            return None
+
+        ph = 1 / home_odds
+        pa = 1 / away_odds
+
+        total = ph + pa
+        ph /= total
+        pa /= total
+
+        # ajuste pitcher simple
+        if game["home_pitcher"] != "UNKNOWN":
+            ph += 0.01
+
+        if ph > pa:
+            return game["home_team"], ph - pa, ph, pa
+        else:
+            return game["away_team"], pa - ph, pa, ph
+
+    except:
+        return None
 
 # =========================
-# IMPLIED PROB
+# SCORING SYSTEM
 # =========================
 
-def imp(price):
-    return 1 / price if price else 0
+def calculate_score(edge, confidence, stability, risk):
+    return (edge * 100) + confidence + stability - risk
 
 # =========================
-# MAIN V9 PRO ENGINE
+# KELLY STAKE
+# =========================
+
+def kelly(edge):
+
+    if edge <= 0:
+        return 0.01
+
+    k = edge / 2
+
+    if k < 0.01:
+        return 0.01
+    if k > 0.05:
+        return 0.05
+
+    return round(k, 3)
+
+# =========================
+# BUILD BETS
+# =========================
+
+def build_bets(raw):
+
+    bets = []
+
+    for r in raw:
+
+        edge = r["edge"]
+
+        score = calculate_score(
+            edge,
+            r.get("confidence", 55),
+            r.get("stability", 50),
+            r.get("risk", 20)
+        )
+
+        bets.append({
+            "game": r["game"],
+            "pick": r["pick"],
+            "edge": edge,
+            "score": score,
+            "stake": kelly(edge),
+            "home_prob": r["home_prob"],
+            "away_prob": r["away_prob"]
+        })
+
+    return bets
+
+# =========================
+# RANKING
+# =========================
+
+def rank_bets(bets):
+    return sorted(bets, key=lambda x: x["score"], reverse=True)
+
+# =========================
+# OUTPUT
+# =========================
+
+def build_report(bets):
+
+    report = "🏦 MLB V10 AUTO BET RANKING\n\n"
+
+    top = bets[:3]
+
+    for i, b in enumerate(top, 1):
+
+        g = b["game"]
+
+        risk = "🟢 LOW" if b["stake"] <= 0.02 else "🟡 MEDIUM" if b["stake"] <= 0.04 else "🔴 HIGH"
+
+        report += (
+            f"🔥 TOP {i}\n"
+            f"⚾ {g['away_team']} vs {g['home_team']}\n"
+            f"🎯 Pick: {b['pick']}\n"
+            f"📊 Edge: {round(b['edge']*100,2)}%\n"
+            f"⭐ Score: {round(b['score'],2)}\n"
+            f"💰 Stake: {round(b['stake']*100,1)}%\n"
+            f"⚠️ Risk: {risk}\n\n"
+            f"────────────────────\n\n"
+        )
+
+    return report
+
+# =========================
+# MAIN
 # =========================
 
 def main():
 
-    print("🚀 V9 PRO SHARP SYSTEM")
+    print("🚀 V10 AUTO BET RANKING SYSTEM")
 
-    odds = fetch_odds()
+    mlb = get_mlb_games()
+    odds = get_odds()
 
-    report = "🏦 MLB V9 PRO SHARP SYSTEM\n\n"
+    games = match_games(mlb, odds)
 
-    for g in odds:
+    raw_bets = []
 
-        game_id = g.get("id")
-        home = g.get("home_team")
-        away = g.get("away_team")
+    for g in games:
 
-        try:
-            book = g["bookmakers"][0]
-            outs = book["markets"][0]["outcomes"]
-        except:
+        result = get_edge(g)
+        if not result:
             continue
 
-        for o in outs:
+        pick, edge, home_p, away_p = result
 
-            team = o["name"]
-            price = o["price"]
+        raw_bets.append({
+            "game": g,
+            "pick": pick,
+            "edge": edge,
+            "home_prob": home_p,
+            "away_prob": away_p,
+            "confidence": 55,
+            "stability": 50,
+            "risk": 20
+        })
 
-            # guardar snapshot
-            store_snapshot(game_id, team, price)
+    bets = build_bets(raw_bets)
 
-            open_p = get_open_price(game_id, team)
-            current_p = get_latest_price(game_id, team)
+    ranked = rank_bets(bets)
 
-            steam = steam_score(open_p, current_p)
-
-            clv = None
-            if open_p and current_p:
-                clv = (imp(current_p) - imp(open_p)) * 100
-
-            # SHARP DETECTION
-            sharp_signal = ""
-
-            if steam > 0.20:
-                sharp_signal = "🔴 SHARP MONEY INCOMING"
-            elif steam > 0.10:
-                sharp_signal = "🟠 MODERATE STEAM"
-
-            if sharp_signal:
-
-                report += (
-                    f"⚾ {away} vs {home}\n"
-                    f"🎯 Team: {team}\n"
-                    f"📉 Open: {open_p}\n"
-                    f"📈 Now: {current_p}\n"
-                    f"💰 Steam: {round(steam,3)}\n"
-                    f"📊 CLV: {round(clv,2) if clv else 'N/A'}%\n"
-                    f"{sharp_signal}\n\n"
-                    f"────────────────────\n\n"
-                )
+    report = build_report(ranked)
 
     send(report)
-    print("✅ V9 PRO DONE")
+    print("✅ V10 SENT")
 
 if __name__ == "__main__":
     main()
