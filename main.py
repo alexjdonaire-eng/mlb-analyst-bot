@@ -105,6 +105,7 @@ def match_games(mlb, odds):
 
             oh = normalize(o["home_team"])
             oa = normalize(o["away_team"])
+
             k1 = f"{oh}_vs_{oa}"
             k2 = f"{oa}_vs_{oh}"
 
@@ -117,7 +118,37 @@ def match_games(mlb, odds):
     return matched
 
 # =========================
-# EDGE CALC
+# CLASSIFY (LIVE / PRE)
+# =========================
+
+def classify(game):
+
+    try:
+
+        t = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+
+        window_start = now - timedelta(hours=3)
+        window_end = now + timedelta(hours=18)
+
+        status = game.get("status", "").lower()
+
+        if "final" in status:
+            return None
+
+        if "in progress" in status:
+            return "LIVE"
+
+        if t < window_start or t > window_end:
+            return None
+
+        return "PRE"
+
+    except:
+        return None
+
+# =========================
+# EDGE CALCULATION
 # =========================
 
 def get_edge(game):
@@ -149,7 +180,7 @@ def get_edge(game):
         ph /= total
         pa /= total
 
-        # pequeño ajuste pitcher
+        # ajuste leve pitcher
         if game["home_pitcher"] != "UNKNOWN":
             ph += 0.01
 
@@ -162,34 +193,22 @@ def get_edge(game):
         return None
 
 # =========================
-# FILTER (BETTING WINDOW + LIVE)
+# DYNAMIC THRESHOLD
 # =========================
 
-def classify(game):
+def get_dynamic_threshold(edges):
 
-    try:
+    if not edges:
+        return 0.02
 
-        t = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).astimezone(timezone.utc)
-        now = datetime.now(timezone.utc)
+    avg = sum(edges) / len(edges)
 
-        window_start = now - timedelta(hours=3)
-        window_end = now + timedelta(hours=18)
+    if avg < 0.02:
+        return 0.018
+    if avg < 0.04:
+        return 0.02
 
-        status = game.get("status", "").lower()
-
-        if "final" in status:
-            return None
-
-        if "in progress" in status:
-            return "LIVE"
-
-        if t < window_start or t > window_end:
-            return None
-
-        return "PRE"
-
-    except:
-        return None
+    return 0.025
 
 # =========================
 # MAIN
@@ -197,14 +216,15 @@ def classify(game):
 
 def main():
 
-    print("🚀 V8.1 CLEAN EDGE SYSTEM")
+    print("🚀 V8.2 FINAL CLEAN SYSTEM")
 
     mlb = get_mlb_games()
     odds = get_odds()
 
     games = match_games(mlb, odds)
 
-    picks = []
+    raw = []
+    edges = []
 
     for g in games:
 
@@ -218,20 +238,26 @@ def main():
 
         pick, edge = result
 
-        # filtro de valor real
-        if edge < 0.03:
-            continue
-
-        picks.append({
+        raw.append({
             "game": g,
             "pick": pick,
             "edge": edge,
             "state": state
         })
 
+        edges.append(edge)
+
+    threshold = get_dynamic_threshold(edges)
+
+    print("THRESHOLD:", threshold)
+
+    picks = [p for p in raw if p["edge"] >= threshold]
     picks.sort(key=lambda x: x["edge"], reverse=True)
 
-    report = "🏦 MLB V8.1 CLEAN EDGE\n\n"
+    report = "🏦 MLB V8.2 FINAL EDGE SYSTEM\n\n"
+
+    if not picks:
+        report += "⚠️ No value bets today\n"
 
     for p in picks[:5]:
 
@@ -244,9 +270,6 @@ def main():
             f"📊 Edge: {round(p['edge']*100,2)}%\n\n"
             f"────────────────────\n\n"
         )
-
-    if not picks:
-        report += "⚠️ No value bets found today."
 
     send(report)
     print("✅ DONE")
