@@ -27,7 +27,7 @@ def send(msg):
     )
 
 # =========================
-# NORMALIZER (MATCHING CORE)
+# NORMALIZER
 # =========================
 
 def normalize_team(name):
@@ -40,7 +40,7 @@ def normalize_team(name):
     )
 
 # =========================
-# MLB GAMES (OFFICIAL)
+# MLB GAMES
 # =========================
 
 def get_mlb_games():
@@ -65,8 +65,8 @@ def get_mlb_games():
                 "gameDate": game.get("gameDate"),
                 "home_team": game["teams"]["home"]["team"]["name"],
                 "away_team": game["teams"]["away"]["team"]["name"],
-                "home_pitcher": game["teams"]["home"].get("probablePitcher", {}).get("fullName"),
-                "away_pitcher": game["teams"]["away"].get("probablePitcher", {}).get("fullName"),
+                "home_pitcher": game["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
+                "away_pitcher": game["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
                 "status": game.get("status", {}).get("detailedState")
             })
 
@@ -95,12 +95,13 @@ def get_odds_games():
     return r.json()
 
 # =========================
-# MATCHING ENGINE
+# MATCHING FIXED (NO DUPLICATES)
 # =========================
 
 def match_games(mlb_games, odds_games):
 
     matched = []
+    used_odds = set()
 
     for m in mlb_games:
 
@@ -108,8 +109,12 @@ def match_games(mlb_games, odds_games):
         mlb_away = normalize_team(m["away_team"])
 
         best_match = None
+        best_index = None
 
-        for o in odds_games:
+        for i, o in enumerate(odds_games):
+
+            if i in used_odds:
+                continue
 
             odds_home = normalize_team(o["home_team"])
             odds_away = normalize_team(o["away_team"])
@@ -120,9 +125,12 @@ def match_games(mlb_games, odds_games):
                 (mlb_home == odds_away and mlb_away == odds_home)
             ):
                 best_match = o
+                best_index = i
                 break
 
         if best_match:
+
+            used_odds.add(best_index)
 
             matched.append({
                 **m,
@@ -132,18 +140,18 @@ def match_games(mlb_games, odds_games):
     return matched
 
 # =========================
-# MODEL
+# MODEL SIMPLE
 # =========================
 
 def pick_model(game):
-
-    home = game["home_team"]
-    away = game["away_team"]
 
     try:
 
         book = game["odds"]["bookmakers"][0]
         outcomes = book["markets"][0]["outcomes"]
+
+        home = game["home_team"]
+        away = game["away_team"]
 
         home_odds = None
         away_odds = None
@@ -166,7 +174,7 @@ def pick_model(game):
     except Exception as e:
         print("MODEL ERROR:", e)
 
-    return home
+    return game["home_team"]
 
 # =========================
 # FILTER TODAY
@@ -193,7 +201,7 @@ def is_today(game):
 
 def main():
 
-    print("🚀 MLB V8 MATCHING SYSTEM")
+    print("🚀 MLB V8 FIXED SYSTEM")
 
     mlb_games = get_mlb_games()
     odds_games = get_odds_games()
@@ -203,7 +211,8 @@ def main():
     print("MLB GAMES:", len(mlb_games))
     print("MATCHED GAMES:", len(games))
 
-    report = "🏦 MLB QUANT V8\n\n"
+    report = "🏦 MLB QUANT V8 FIXED\n\n"
+
     total = 0
     seen = set()
 
@@ -228,7 +237,7 @@ def main():
 
         report += (
             f"⚾ {away} vs {home}\n"
-            f"🏟 Pitchers: {game.get('away_pitcher','?')} vs {game.get('home_pitcher','?')}\n"
+            f"🏟 Pitchers: {game['away_pitcher']} vs {game['home_pitcher']}\n"
             f"🎯 Pick: {pick}\n\n"
             f"────────────────────\n\n"
         )
