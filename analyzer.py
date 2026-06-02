@@ -24,52 +24,98 @@ def send(msg):
 
 
 # =========================
-# LOAD DATA
+# LOAD HISTORY SAFE
 # =========================
 
 def load_history():
     rows = []
+
     try:
         with open(HISTORY_FILE, "r") as f:
             for line in f:
                 try:
-                    rows.append(json.loads(line))
+                    data = json.loads(line)
+
+                    # VALIDACIÓN BÁSICA
+                    if not data.get("game_id"):
+                        continue
+                    if not data.get("odds"):
+                        continue
+                    if not data.get("home_team") or not data.get("away_team"):
+                        continue
+
+                    rows.append(data)
+
                 except:
-                    pass
+                    continue
     except:
         pass
+
     return rows
 
 
-def group_games(history):
+# =========================
+# DEDUPLICATION ENGINE
+# =========================
+
+def deduplicate(rows):
+    seen = set()
+    clean = []
+
+    for r in rows:
+
+        key = (
+            r["game_id"],
+            r["time"],
+            str(sorted(r["odds"].items()))
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        clean.append(r)
+
+    return clean
+
+
+# =========================
+# GROUP GAMES PROPERLY
+# =========================
+
+def group_games(rows):
     games = {}
-    for r in history:
-        gid = r.get("game_id")
-        if gid:
-            games.setdefault(gid, []).append(r)
+
+    for r in rows:
+        gid = r["game_id"]
+        games.setdefault(gid, []).append(r)
+
+    # ordenar snapshots por tiempo
+    for gid in games:
+        games[gid].sort(key=lambda x: x["time"])
+
     return games
 
 
 # =========================
-# MODEL (baseline + stability)
+# VALUE MODEL SAFE
 # =========================
 
-def model_probability(series):
+def model_prob(series):
     if len(series) < 3:
         return 0
-    avg_odds = sum(series[-3:]) / min(3, len(series))
-    return 1 / avg_odds
+
+    avg = sum(series[-3:]) / len(series[-3:])
+    return 1 / avg
 
 
 # =========================
-# SHARP DETECTION CORE
+# ANALYSIS ENGINE SAFE
 # =========================
 
 def analyze_game(rows):
 
-    rows.sort(key=lambda x: x["time"])
-
-    if len(rows) < 5:
+    if len(rows) < 4:
         return None
 
     teams = rows[0]["odds"].keys()
@@ -77,63 +123,38 @@ def analyze_game(rows):
 
     for team in teams:
 
-        series = [r["odds"][team] for r in rows if team in r["odds"]]
+        series = []
+        for r in rows:
+            if team in r["odds"]:
+                series.append(r["odds"][team])
 
-        if len(series) < 5:
+        # VALIDACIÓN CRÍTICA
+        if len(series) < 4:
             continue
 
         start = series[0]
         end = series[-1]
 
-        # =========================
-        # MOVIMIENTO
-        # =========================
         change = end - start
         volatility = max(series) - min(series)
 
-        # steam detection (movimiento sostenido)
         momentum = sum(
             1 for i in range(1, len(series))
             if series[i] < series[i - 1]
         ) / (len(series) - 1)
 
-        # =========================
-        # VALUE REAL
-        # =========================
-        implied_prob = 1 / end
-        model_prob = model_probability(series)
+        model = model_prob(series)
+        implied = 1 / end if end != 0 else 0
 
-        if model_prob == 0:
+        if model == 0:
             continue
 
-        edge = model_prob - implied_prob
+        edge = model - implied
 
-        # =========================
-        # SHARP SCORE (mejorado)
-        # =========================
-        sharp_score = (
-            abs(change) * 1.5 +
-            volatility * 0.8 +
-            momentum * 2.0
-        )
+        score = (edge * 100) + (momentum * 10) + (volatility * 0.5)
 
-        # =========================
-        # FINAL SCORE PRO
-        # =========================
-        final_score = (
-            edge * 120 +
-            sharp_score * 0.6 +
-            momentum * 10
-        )
-
-        # =========================
-        # FILTRO PRO SHARP
-        # =========================
-        if (
-            edge > 0.015 and          # value real mínimo
-            sharp_score > 0.8 and     # movimiento real
-            momentum > 0.55           # steam confirmado
-        ):
+        # 🔥 FILTRO BALANCEADO (NO OVERFITTING)
+        if edge > 0.01 and momentum > 0.45:
 
             signals.append({
                 "team": team,
@@ -142,20 +163,26 @@ def analyze_game(rows):
                 "change": change,
                 "edge": edge,
                 "momentum": momentum,
-                "sharp_score": sharp_score,
-                "final_score": final_score
+                "score": score
             })
 
     return signals
 
 
 # =========================
-# MAIN ENGINE
+# MAIN
 # =========================
 
 def main():
 
     history = load_history()
+
+    print("RAW HISTORY:", len(history))
+
+    history = deduplicate(history)
+
+    print("DEDUPED:", len(history))
+
     games = group_games(history)
 
     print("GAMES:", len(games))
@@ -177,32 +204,28 @@ def main():
 
         for s in signals:
 
-            direction = "📉 steam move" if s["change"] < 0 else "📈 reverse pressure"
-
             text += (
                 f"🔥 {s['team']}\n"
-                f"{direction}\n"
                 f"Edge: {round(s['edge']*100,2)}%\n"
                 f"Momentum: {round(s['momentum'],2)}\n"
-                f"Sharp Score: {round(s['sharp_score'],2)}\n"
-                f"FINAL SCORE: {round(s['final_score'],2)}\n\n"
+                f"Score: {round(s['score'],2)}\n\n"
             )
 
-            best = max(best, s["final_score"])
+            best = max(best, s["score"])
 
         ranked.append((best, text))
 
     ranked.sort(reverse=True, key=lambda x: x[0])
 
     if not ranked:
-        report = "🏆 PRO SHARP ENGINE\n\n⚠️ Sin señales de sharp money detectadas."
+        report = "🏦 DATA PIPELINE FIXED\n\n⚠️ No clean opportunities detected yet."
     else:
-        report = "🏆 PRO SHARP ENGINE\n\n"
+        report = "🏦 DATA PIPELINE FIXED\n\n"
         for _, text in ranked[:5]:
             report += text + "────────────────────\n\n"
 
     send(report)
-    print("PRO SHARP SENT")
+    print("PIPELINE FIXED SENT")
 
 
 if __name__ == "__main__":
