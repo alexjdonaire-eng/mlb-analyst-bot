@@ -8,6 +8,10 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
+# =========================
+# TELEGRAM
+# =========================
+
 def send(msg):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -15,6 +19,10 @@ def send(msg):
         timeout=20
     )
 
+
+# =========================
+# LOAD DATA
+# =========================
 
 def load_history():
     rows = []
@@ -37,52 +45,78 @@ def group_games(history):
     return games
 
 
+# =========================
+# ANALYSIS ENGINE PRO
+# =========================
+
 def analyze_game(rows):
 
     rows.sort(key=lambda x: x["time"])
 
-    if len(rows) < 3:
+    if len(rows) < 4:
         return None
+
+    teams = list(rows[0]["odds"].keys())
 
     signals = []
 
-    # tomamos evolución por equipo
-    teams = rows[0]["odds"].keys()
-
     for team in teams:
 
-        prices = []
+        series = []
 
         for r in rows:
             if team in r["odds"]:
-                prices.append(r["odds"][team])
+                series.append(r["odds"][team])
 
-        if len(prices) < 3:
+        if len(series) < 4:
             continue
 
-        start = prices[0]
-        end = prices[-1]
+        start = series[0]
+        end = series[-1]
 
         change = end - start
 
-        # volatilidad (movimiento total)
-        volatility = max(prices) - min(prices)
+        # volatilidad total
+        volatility = max(series) - min(series)
 
-        # sharp conditions
-        if change < -0.15 and volatility > 0.20:
-            signals.append((team, start, end, change, volatility))
+        # consistencia: cuántas veces bajó consecutivamente
+        drops = 0
+        for i in range(1, len(series)):
+            if series[i] < series[i - 1]:
+                drops += 1
+
+        consistency = drops / (len(series) - 1)
+
+        # score pro (clave del sistema)
+        score = (abs(change) * 2) + volatility + (consistency * 0.5)
+
+        # filtro sharp real
+        if change < -0.12 and volatility > 0.18 and consistency > 0.55:
+            signals.append({
+                "team": team,
+                "start": start,
+                "end": end,
+                "change": change,
+                "volatility": volatility,
+                "consistency": round(consistency, 2),
+                "score": round(score, 2)
+            })
 
     return signals
 
+
+# =========================
+# MAIN
+# =========================
 
 def main():
 
     history = load_history()
     games = group_games(history)
 
-    report = "🔥 SHARP MONEY DETECTOR MLB\n\n"
+    report = "🔥 SHARP MONEY PRO SYSTEM MLB\n\n"
 
-    found = 0
+    results = []
 
     for gid, rows in games.items():
 
@@ -92,25 +126,36 @@ def main():
             continue
 
         game = rows[-1]
+
         text = f"⚾ {game['away_team']} vs {game['home_team']}\n\n"
 
-        for team, start, end, change, vol in signals:
+        for s in signals:
+
+            direction = "📉 dinero entrando fuerte" if s["change"] < 0 else "📈 presión en contra"
 
             text += (
-                f"🔥 {team}\n"
-                f"{start} → {end}\n"
-                f"Movimiento: {round(change, 3)}\n"
-                f"Volatilidad: {round(vol, 3)}\n\n"
+                f"🔥 {s['team']}\n"
+                f"{s['start']} → {s['end']}\n"
+                f"{direction}\n"
+                f"Score: {s['score']}\n"
+                f"Consistencia: {s['consistency']}\n\n"
             )
 
-        report += text + "────────────────────\n\n"
-        found += 1
+        results.append((signals[0]["score"], text))
 
-    if found == 0:
-        report = "🔥 SHARP MONEY DETECTOR MLB\n\n⚠️ Sin movimientos institucionales detectados."
+    # ranking global (CLAVE PRO)
+    results.sort(reverse=True, key=lambda x: x[0])
+
+    if not results:
+        report = "🔥 SHARP MONEY PRO SYSTEM MLB\n\n⚠️ Sin señales institucionales fuertes."
+    else:
+        report = "🔥 SHARP MONEY PRO SYSTEM MLB\n\n"
+
+        for _, text in results[:5]:
+            report += text + "────────────────────\n\n"
 
     send(report)
-    print("SHARP ANALYZER SENT")
+    print("PRO ANALYZER SENT")
 
 
 if __name__ == "__main__":
