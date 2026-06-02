@@ -7,27 +7,24 @@ START_BANKROLL = 1000
 
 
 # =========================
-# LOAD DATA
+# LOAD
 # =========================
 
 def load():
     rows = []
-    try:
-        with open(HISTORY_FILE, "r") as f:
-            for line in f:
-                try:
-                    r = json.loads(line)
-                    if "game_id" in r and "odds" in r:
-                        rows.append(r)
-                except:
-                    continue
-    except:
-        pass
+    with open(HISTORY_FILE, "r") as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+                if "game_id" in r and "odds" in r and "time" in r:
+                    rows.append(r)
+            except:
+                continue
     return rows
 
 
 # =========================
-# GROUP
+# GROUP BY GAME
 # =========================
 
 def group(rows):
@@ -42,7 +39,17 @@ def group(rows):
 
 
 # =========================
-# CORE METRICS
+# SIMPLE MODEL (rolling learning proxy)
+# =========================
+
+def model(series):
+    if len(series) < 4:
+        return 0
+    return 1 / (sum(series[-5:]) / len(series[-5:]))
+
+
+# =========================
+# CLV
 # =========================
 
 def clv(series):
@@ -51,41 +58,24 @@ def clv(series):
     return (series[0] - series[-1]) / series[0]
 
 
-def edge(series):
-    if len(series) < 4:
+# =========================
+# KELLY (conservative)
+# =========================
+
+def kelly(edge, odds):
+    if odds <= 1:
         return 0
-    avg = sum(series[-5:]) / len(series[-5:])
-    return (1 / avg) - (1 / series[-1])
+    b = odds - 1
+    p = max(min(edge + (1 / odds), 0.95), 0.05)
+    q = 1 - p
+    return max((b * p - q) / b, 0)
 
 
 # =========================
-# SIMULATED TRADE ENGINE
+# WALK-FORWARD SIMULATION
 # =========================
 
-def simulate(edge_val, clv_val):
-
-    # hedge fund logic:
-    # CLV + edge = expected profitability signal
-
-    score = (edge_val * 120) + (clv_val * 100)
-
-    if score > 5:
-        return 1.15
-    elif score > 2:
-        return 1.05
-    elif score > 0:
-        return 1.01
-    elif score > -2:
-        return 0.98
-    else:
-        return 0.95
-
-
-# =========================
-# DASHBOARD ENGINE
-# =========================
-
-def dashboard():
+def walk_forward():
 
     rows = load()
     games = group(rows)
@@ -96,13 +86,7 @@ def dashboard():
     bets = 0
     wins = 0
 
-    equity_curve = [bankroll]
-
-    clv_list = []
-    edge_list = []
-
-    worst_streak = 0
-    current_streak = 0
+    equity = []
 
     for gid, rows in games.items():
 
@@ -118,28 +102,48 @@ def dashboard():
             if len(series) < 6:
                 continue
 
+            # =========================
+            # SIGNAL ENGINE (LIVE STYLE)
+            # =========================
             clv_val = clv(series)
-            edge_val = edge(series)
+            model_p = model(series)
 
-            if clv_val < 0.005 or edge_val < 0.005:
+            close_odds = series[-1]
+            implied = 1 / close_odds if close_odds else 0
+
+            edge = model_p - implied
+
+            # =========================
+            # TRADE FILTER
+            # =========================
+            if clv_val < 0.005 or edge < 0.005:
                 continue
 
-            ret = simulate(edge_val, clv_val)
+            # =========================
+            # STAKING (REAL MONEY SIM)
+            # =========================
+            stake_pct = kelly(edge, close_odds)
+            stake = bankroll * stake_pct
 
-            bankroll *= ret
-            equity_curve.append(bankroll)
+            if stake < 1:
+                continue
+
+            # =========================
+            # OUTCOME SIMULATION (proxy)
+            # =========================
+            # CLV positive = higher probability of profit
+            result = 1.1 if clv_val > 0 else 0.95
+
+            profit = stake * (result - 1)
+
+            bankroll += profit
 
             bets += 1
 
-            if ret > 1:
+            if profit > 0:
                 wins += 1
-                current_streak = 0
-            else:
-                current_streak += 1
-                worst_streak = max(worst_streak, current_streak)
 
-            clv_list.append(clv_val)
-            edge_list.append(edge_val)
+            equity.append(bankroll)
 
             peak = max(peak, bankroll)
 
@@ -149,30 +153,24 @@ def dashboard():
 
     roi = (bankroll - START_BANKROLL) / START_BANKROLL * 100
     winrate = (wins / bets * 100) if bets else 0
-    avg_clv = sum(clv_list) / len(clv_list) if clv_list else 0
-    avg_edge = sum(edge_list) / len(edge_list) if edge_list else 0
     drawdown = (peak - bankroll) / peak * 100 if peak else 0
 
     # =========================
     # REPORT
     # =========================
 
-    print("\n🏦 QUANT DASHBOARD PRO\n")
-    print("━━━━━━━━━━━━━━━━━━━━━━")
+    print("\n🏦 WALK-FORWARD QUANT REPORT\n")
+    print("━━━━━━━━━━━━━━━━━━━━")
     print(f"Bets: {bets}")
     print(f"Winrate: {round(winrate,2)}%")
     print(f"ROI: {round(roi,2)}%")
     print(f"Final bankroll: {round(bankroll,2)}")
-    print("━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"Avg CLV: {round(avg_clv,4)}")
-    print(f"Avg Edge: {round(avg_edge,4)}")
     print(f"Max Drawdown: {round(drawdown,2)}%")
-    print(f"Worst losing streak: {worst_streak}")
-    print("━━━━━━━━━━━━━━━━━━━━━━")
+    print("━━━━━━━━━━━━━━━━━━━━")
 
-    print("\n📈 EQUITY CURVE (last 10 points):")
-    print([round(x,2) for x in equity_curve[-10:]])
+    print("\n📈 Equity curve (last 10):")
+    print([round(x,2) for x in equity[-10:]])
 
 
 if __name__ == "__main__":
-    dashboard()
+    walk_forward()
