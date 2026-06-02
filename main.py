@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 # =========================
 # CONFIG
@@ -47,14 +47,23 @@ def get_games():
     return r.json()
 
 # =========================
-# FILTER TODAY
+# FILTER TODAY (FIX UTC)
 # =========================
 
 def is_today(game):
+
     try:
-        game_date = game["commence_time"][:10]
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        return game_date == today
+
+        game_time = datetime.fromisoformat(
+            game["commence_time"].replace("Z", "+00:00")
+        )
+
+        now = datetime.now(timezone.utc)
+
+        hours_until = (game_time - now).total_seconds() / 3600
+
+        return -6 <= hours_until <= 24
+
     except:
         return False
 
