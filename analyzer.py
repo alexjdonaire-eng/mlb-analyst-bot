@@ -91,7 +91,18 @@ def main():
 
     history = load_history()
 
-    games = latest_games(history)
+    games = list(latest_games(history))
+
+    print("TOTAL GAMES:", len(games))
+
+    for g in games:
+        print(
+            g.get("away_team"),
+            "vs",
+            g.get("home_team"),
+            "|",
+            g.get("game_id")
+        )
 
     report = "🏦 MLB PREDICCIONES\n\n"
 
