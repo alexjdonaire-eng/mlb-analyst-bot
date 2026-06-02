@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from datetime import datetime
 
@@ -9,7 +10,6 @@ from datetime import datetime
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
@@ -24,50 +24,45 @@ def send(msg):
     )
 
 # =========================
-# NORMALIZER
+# SNAPSHOT STORAGE
 # =========================
 
-def normalize(name):
-    return (
-        name.lower()
-        .replace("new york", "ny")
-        .replace("los angeles", "la")
-        .replace("st. louis", "st louis")
-        .replace(" ", "")
-    )
+def save_snapshot(game_id, data):
+
+    snapshot = {
+        "time": datetime.utcnow().isoformat(),
+        "game_id": game_id,
+        "data": data
+    }
+
+    with open("odds_history.jsonl", "a") as f:
+        f.write(json.dumps(snapshot) + "\n")
 
 # =========================
-# MLB DATA
+# LOAD HISTORY
 # =========================
 
-def get_mlb_games():
+def load_history(game_id):
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        with open("odds_history.jsonl", "r") as f:
+            lines = f.readlines()
 
-    url = f"{MLB_URL}?sportId=1&date={today}&hydrate=probablePitcher"
-    r = requests.get(url)
+        history = []
 
-    if r.status_code != 200:
+        for l in lines:
+            obj = json.loads(l)
+
+            if obj["game_id"] == game_id:
+                history.append(obj)
+
+        return history
+
+    except:
         return []
 
-    data = r.json()
-    games = []
-
-    for d in data.get("dates", []):
-        for g in d.get("games", []):
-
-            games.append({
-                "id": g.get("gamePk"),
-                "home_team": g["teams"]["home"]["team"]["name"],
-                "away_team": g["teams"]["away"]["team"]["name"],
-                "home_pitcher": g["teams"]["home"].get("probablePitcher", {}).get("fullName") or "UNKNOWN",
-                "away_pitcher": g["teams"]["away"].get("probablePitcher", {}).get("fullName") or "UNKNOWN"
-            })
-
-    return games
-
 # =========================
-# ODDS DATA
+# CURRENT ODDS
 # =========================
 
 def get_odds():
@@ -85,128 +80,139 @@ def get_odds():
     return r.json() if r.status_code == 200 else []
 
 # =========================
-# MATCHING
+# STEAM DETECTION (REAL)
 # =========================
 
-def match_games(mlb, odds):
+def steam_signal(open_line, current_line, team):
 
-    matched = []
-    used = set()
-
-    for m in mlb:
-
-        mh = normalize(m["home_team"])
-        ma = normalize(m["away_team"])
-        key = f"{mh}_vs_{ma}"
-
-        for o in odds:
-
-            oh = normalize(o["home_team"])
-            oa = normalize(o["away_team"])
-
-            k1 = f"{oh}_vs_{oa}"
-            k2 = f"{oa}_vs_{oh}"
-
-            if (key == k1 or key == k2) and key not in used:
-
-                matched.append({**m, "odds": o})
-                used.add(key)
-                break
-
-    return matched
-
-# =========================
-# STEAM DETECTION
-# =========================
-
-def steam_signal(open_price, current_price):
-
-    if not open_price:
+    if not open_line or not current_line:
         return None
 
-    move = (open_price - current_price) / open_price
+    try:
 
-    if move > 0.03:
-        return "SHARP EARLY MOVE"
-    elif move > 0.015:
-        return "MODERATE STEAM"
+        open_price = open_line["data"][team]
+        current_price = current_line[team]
 
-    return None
+        move = (open_price - current_price) / open_price
 
-# =========================
-# MARKET BIAS
-# =========================
+        if move > 0.03:
+            return "SHARP STEAM"
+        elif move > 0.015:
+            return "MODERATE STEAM"
 
-def market_bias(model_prob, market_prob):
+        return None
 
-    diff = model_prob - market_prob
-
-    if diff > 0.04:
-        return "UNDERVALUED TEAM"
-    elif diff < -0.04:
-        return "OVERVALUED TEAM"
-
-    return None
+    except:
+        return None
 
 # =========================
-# CLV FORECAST
+# CLV REAL
 # =========================
 
-def projected_clv(model_prob, market_prob, steam):
+def clv(open_line, current_line, team):
+
+    try:
+
+        open_price = open_line["data"][team]
+        current_price = current_line[team]
+
+        return (current_price - open_price) / open_price
+
+    except:
+        return 0
+
+# =========================
+# EDGE FINAL
+# =========================
+
+def final_edge(model_prob, market_prob, clv_value):
 
     base = model_prob - market_prob
-
-    if steam == "SHARP EARLY MOVE":
-        base += 0.02
-    elif steam == "MODERATE STEAM":
-        base += 0.01
-
-    return base
+    return base + (clv_value * 0.5)
 
 # =========================
-# EDGE V11
+# NORMALIZER
 # =========================
 
-def v11_edge(model_prob, market_prob, steam):
+def normalize(name):
+    return (
+        name.lower()
+        .replace("new york", "ny")
+        .replace("los angeles", "la")
+        .replace("st. louis", "st louis")
+        .replace(" ", "")
+    )
 
-    clv = projected_clv(model_prob, market_prob, steam)
+# =========================
+# ANALYZE GAME
+# =========================
 
-    if clv < 0.01:
+def analyze_game(game):
+
+    try:
+
+        book = game["bookmakers"][0]
+        outs = book["markets"][0]["outcomes"]
+
+        home = game["home_team"]
+        away = game["away_team"]
+
+        home_odds = None
+        away_odds = None
+
+        for o in outs:
+            if o["name"] == home:
+                home_odds = o["price"]
+            if o["name"] == away:
+                away_odds = o["price"]
+
+        if not home_odds or not away_odds:
+            return None
+
+        # MARKET PROB
+        ph_mkt = 1 / home_odds
+        pa_mkt = 1 / away_odds
+
+        total = ph_mkt + pa_mkt
+        ph_mkt /= total
+        pa_mkt /= total
+
+        # SIMPLE MODEL
+        ph_model = ph_mkt + 0.015
+        pa_model = pa_mkt
+
+        history = load_history(game["id"])
+        open_line = history[0] if history else None
+
+        current = {
+            home: home_odds,
+            away: away_odds
+        }
+
+        results = []
+
+        for team in current.keys():
+
+            steam = steam_signal(open_line, current, team)
+            clv_value = clv(open_line, current, team)
+
+            market_prob = 1 / current[team]
+            model_prob = market_prob + (0.01 if team == home else 0)
+
+            edge = final_edge(model_prob, market_prob, clv_value)
+
+            results.append({
+                "team": team,
+                "edge": edge,
+                "clv": clv_value,
+                "steam": steam,
+                "score": edge * 100
+            })
+
+        return game, results
+
+    except:
         return None
-
-    return clv
-
-# =========================
-# CORE ANALYSIS
-# =========================
-
-def analyze_game(game, model_prob, market_prob, open_price, current_price):
-
-    steam = steam_signal(open_price, current_price)
-    bias = market_bias(model_prob, market_prob)
-    edge = v11_edge(model_prob, market_prob, steam)
-
-    if not edge:
-        return None
-
-    score = edge * 100
-
-    return {
-        "game": game,
-        "edge": edge,
-        "score": score,
-        "steam": steam,
-        "bias": bias
-    }
-
-# =========================
-# MAIN MODEL (SIMPLE PROB MODEL)
-# =========================
-
-def simple_model(game):
-
-    # modelo base simple (puedes mejorar luego con pitchers reales)
-    return 0.52, 0.48
 
 # =========================
 # MAIN
@@ -214,84 +220,55 @@ def simple_model(game):
 
 def main():
 
-    print("🚀 V11 SHARP INTELLIGENCE SYSTEM")
+    print("🚀 V11.5 MARKET DATA LAYER")
 
-    mlb = get_mlb_games()
     odds = get_odds()
 
-    games = match_games(mlb, odds)
+    all_results = []
 
-    results = []
+    for game in odds:
 
-    for g in games:
+        result = analyze_game(game)
 
-        try:
-            book = g["odds"]["bookmakers"][0]
-            outs = book["markets"][0]["outcomes"]
-
-            home = g["home_team"]
-            away = g["away_team"]
-
-            home_odds = None
-            away_odds = None
-
-            for o in outs:
-                if o["name"] == home:
-                    home_odds = o["price"]
-                if o["name"] == away:
-                    away_odds = o["price"]
-
-            if not home_odds or not away_odds:
-                continue
-
-            ph_mkt = 1 / home_odds
-            pa_mkt = 1 / away_odds
-
-            total = ph_mkt + pa_mkt
-            ph_mkt /= total
-            pa_mkt /= total
-
-            # simple model
-            ph_model, pa_model = simple_model(g)
-
-            # home side
-            result_home = analyze_game(g, ph_model, ph_mkt, home_odds, home_odds)
-
-            # away side
-            result_away = analyze_game(g, pa_model, pa_mkt, away_odds, away_odds)
-
-            if result_home:
-                results.append(result_home)
-
-            if result_away:
-                results.append(result_away)
-
-        except:
+        if not result:
             continue
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+        g, res = result
 
-    report = "🏦 MLB V11 SHARP INTELLIGENCE\n\n"
+        # save snapshot (OPEN-LIKE STATE)
+        try:
+            save_snapshot(g["id"], {
+                g["home_team"]: 1 / res[0]["edge"] if res else 1,
+                g["away_team"]: 1 / res[1]["edge"] if len(res) > 1 else 1
+            })
+        except:
+            pass
 
-    if not results:
-        report += "⚠️ No early market inefficiencies detected today\n"
+        for r in res:
+            all_results.append((g, r))
 
-    for r in results[:3]:
+    all_results.sort(key=lambda x: x[1]["score"], reverse=True)
 
-        g = r["game"]
+    report = "🏦 MLB V11.5 MARKET INTELLIGENCE\n\n"
+
+    if not all_results:
+        report += "⚠️ No market inefficiencies detected\n"
+
+    for g, r in all_results[:3]:
 
         report += (
             f"🔥 SHARP SIGNAL\n"
             f"⚾ {g['away_team']} vs {g['home_team']}\n"
-            f"🎯 Edge: {round(r['edge']*100,2)}%\n"
-            f"📈 Score: {round(r['score'],2)}\n"
+            f"🎯 Pick: {r['team']}\n"
+            f"📊 Edge: {round(r['edge']*100,2)}%\n"
+            f"📈 CLV: {round(r['clv']*100,2)}%\n"
             f"🔥 Steam: {r['steam']}\n"
-            f"⚠️ Bias: {r['bias']}\n\n"
+            f"⭐ Score: {round(r['score'],2)}\n\n"
             f"────────────────────\n\n"
         )
 
     send(report)
-    print("✅ V11 SENT")
+    print("✅ V11.5 SENT")
 
 if __name__ == "__main__":
     main()
