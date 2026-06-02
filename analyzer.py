@@ -139,9 +139,9 @@ def main():
             "Espera algunos snapshots más."
         )
 
-    send_telegram(
-    f"✅ COLLECTOR RUN\n\nGames processed: {saved}"
-)
+    send(report)
+
+    print("✅ ANALYZER SENT")
 
 if __name__ == "__main__":
     main()
