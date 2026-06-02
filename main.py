@@ -10,7 +10,8 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
 
 # =========================
 # TELEGRAM
@@ -26,13 +27,59 @@ def send(msg):
     )
 
 # =========================
-# DATA FETCH
+# NORMALIZER (MATCHING CORE)
 # =========================
 
-def get_games():
+def normalize_team(name):
+    return (
+        name.lower()
+        .replace("new york", "ny")
+        .replace("los angeles", "la")
+        .replace("st. louis", "st louis")
+        .replace(" ", "")
+    )
+
+# =========================
+# MLB GAMES (OFFICIAL)
+# =========================
+
+def get_mlb_games():
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    url = f"{MLB_URL}?sportId=1&date={today}&hydrate=probablePitcher"
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        print("ERROR MLB:", r.text)
+        return []
+
+    data = r.json()
+    games = []
+
+    for date in data.get("dates", []):
+        for game in date.get("games", []):
+
+            games.append({
+                "id": game.get("gamePk"),
+                "gameDate": game.get("gameDate"),
+                "home_team": game["teams"]["home"]["team"]["name"],
+                "away_team": game["teams"]["away"]["team"]["name"],
+                "home_pitcher": game["teams"]["home"].get("probablePitcher", {}).get("fullName"),
+                "away_pitcher": game["teams"]["away"].get("probablePitcher", {}).get("fullName"),
+                "status": game.get("status", {}).get("detailedState")
+            })
+
+    return games
+
+# =========================
+# ODDS API
+# =========================
+
+def get_odds_games():
 
     r = requests.get(
-        URL,
+        ODDS_URL,
         params={
             "apiKey": ODDS_API_KEY,
             "regions": "us",
@@ -42,35 +89,50 @@ def get_games():
     )
 
     if r.status_code != 200:
-        print("ERROR:", r.text)
+        print("ERROR ODDS:", r.text)
         return []
 
     return r.json()
 
 # =========================
-# FILTER TODAY (FIXED)
+# MATCHING ENGINE
 # =========================
 
-def is_today(game):
+def match_games(mlb_games, odds_games):
 
-    try:
+    matched = []
 
-        game_date = datetime.fromisoformat(
-            game["commence_time"].replace("Z", "+00:00")
-        ).date()
+    for m in mlb_games:
 
-        today_utc = datetime.now(timezone.utc).date()
+        mlb_home = normalize_team(m["home_team"])
+        mlb_away = normalize_team(m["away_team"])
 
-        return game_date == today_utc
+        best_match = None
 
-    except Exception as e:
+        for o in odds_games:
 
-        print("DATE FILTER ERROR:", e)
+            odds_home = normalize_team(o["home_team"])
+            odds_away = normalize_team(o["away_team"])
 
-        return False
+            if (
+                (mlb_home == odds_home and mlb_away == odds_away)
+                or
+                (mlb_home == odds_away and mlb_away == odds_home)
+            ):
+                best_match = o
+                break
+
+        if best_match:
+
+            matched.append({
+                **m,
+                "odds": best_match
+            })
+
+    return matched
 
 # =========================
-# SIMPLE MODEL
+# MODEL
 # =========================
 
 def pick_model(game):
@@ -80,7 +142,7 @@ def pick_model(game):
 
     try:
 
-        book = game["bookmakers"][0]
+        book = game["odds"]["bookmakers"][0]
         outcomes = book["markets"][0]["outcomes"]
 
         home_odds = None
@@ -102,10 +164,28 @@ def pick_model(game):
                 return away
 
     except Exception as e:
-
         print("MODEL ERROR:", e)
 
     return home
+
+# =========================
+# FILTER TODAY
+# =========================
+
+def is_today(game):
+
+    try:
+        game_date = datetime.fromisoformat(
+            game["gameDate"].replace("Z", "+00:00")
+        ).date()
+
+        today = datetime.now(timezone.utc).date()
+
+        return game_date == today
+
+    except Exception as e:
+        print("DATE ERROR:", e)
+        return False
 
 # =========================
 # MAIN
@@ -113,62 +193,51 @@ def pick_model(game):
 
 def main():
 
-    print("🚀 MLB FOUNDATION STABLE V7.2")
+    print("🚀 MLB V8 MATCHING SYSTEM")
 
-    games = get_games()
+    mlb_games = get_mlb_games()
+    odds_games = get_odds_games()
 
-    print("TOTAL API GAMES:", len(games))
+    games = match_games(mlb_games, odds_games)
 
-    report = "🏦 MLB QUANT ALERT\n\n"
+    print("MLB GAMES:", len(mlb_games))
+    print("MATCHED GAMES:", len(games))
 
-    total_games = 0
-
-    seen_games = set()
+    report = "🏦 MLB QUANT V8\n\n"
+    total = 0
+    seen = set()
 
     for game in games:
-
-        print(
-            game.get("away_team"),
-            "vs",
-            game.get("home_team"),
-            "-",
-            game.get("commence_time")
-        )
 
         if not is_today(game):
             continue
 
         game_id = game.get("id")
 
-        if not game_id:
+        if game_id in seen:
             continue
 
-        if game_id in seen_games:
-            continue
-
-        seen_games.add(game_id)
+        seen.add(game_id)
 
         away = game["away_team"]
         home = game["home_team"]
 
         pick = pick_model(game)
 
-        total_games += 1
+        total += 1
 
         report += (
-            f"⚾ {away} vs {home}\n\n"
-            f"🎯 Ganador: {pick}\n\n"
+            f"⚾ {away} vs {home}\n"
+            f"🏟 Pitchers: {game.get('away_pitcher','?')} vs {game.get('home_pitcher','?')}\n"
+            f"🎯 Pick: {pick}\n\n"
             f"────────────────────\n\n"
         )
 
-    report = (
-        f"📊 Juegos encontrados: {total_games}\n\n"
-        + report
-    )
+    report = f"📊 Juegos analizados: {total}\n\n" + report
 
     send(report)
 
-    print("✅ Reporte enviado")
+    print("✅ Enviado a Telegram")
 
 if __name__ == "__main__":
     main()
