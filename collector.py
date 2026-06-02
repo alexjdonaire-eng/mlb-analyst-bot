@@ -3,10 +3,6 @@ import json
 import requests
 from datetime import datetime, UTC
 
-# =========================
-# CONFIG
-# =========================
-
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 API_KEY = os.getenv("ODDS_API_KEY")
@@ -15,94 +11,51 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "market_history.jsonl"
 
-# =========================
-# TELEGRAM
-# =========================
 
 def send_telegram(msg):
-
     try:
-
-        r = requests.post(
+        requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": msg
-            },
+            json={"chat_id": CHAT_ID, "text": msg},
             timeout=20
         )
+    except:
+        pass
 
-        print("TELEGRAM STATUS:", r.status_code)
-
-    except Exception as e:
-
-        print("TELEGRAM ERROR:", e)
-
-# =========================
-# GET ODDS
-# =========================
 
 def get_odds():
+    r = requests.get(
+        ODDS_URL,
+        params={
+            "apiKey": API_KEY,
+            "regions": "us",
+            "markets": "h2h",
+            "oddsFormat": "decimal"
+        },
+        timeout=30
+    )
 
-    try:
-
-        r = requests.get(
-            ODDS_URL,
-            params={
-                "apiKey": API_KEY,
-                "regions": "us",
-                "markets": "h2h",
-                "oddsFormat": "decimal"
-            },
-            timeout=30
-        )
-
-        print("ODDS STATUS:", r.status_code)
-
-        if r.status_code != 200:
-            print(r.text)
-            return []
-
-        return r.json()
-
-    except Exception as e:
-
-        print("ODDS ERROR:", e)
+    if r.status_code != 200:
         return []
 
-# =========================
-# SAVE SNAPSHOT
-# =========================
+    return r.json()
 
-def save_snapshot(game):
 
-    snapshot = {
-        "time": datetime.now(UTC).isoformat(),
-        "game_id": game["id"],
-        "home_team": game["home_team"],
-        "away_team": game["away_team"],
-        "commence_time": game.get("commence_time"),
-        "odds": {}
-    }
-
+def load_last_snapshot():
     try:
+        with open(HISTORY_FILE, "r") as f:
+            lines = f.readlines()
+            if not lines:
+                return {}
+            return json.loads(lines[-1])
+    except:
+        return {}
 
-        book = game["bookmakers"][0]
-        outs = book["markets"][0]["outcomes"]
 
-        for o in outs:
-            snapshot["odds"][o["name"]] = o["price"]
+def save_snapshot(data):
+    with open(HISTORY_FILE, "a") as f:
+        f.write(json.dumps(data) + "\n")
 
-        with open(HISTORY_FILE, "a") as f:
-            f.write(json.dumps(snapshot) + "\n")
-
-    except Exception as e:
-
-        print("SAVE ERROR:", e)
-
-# =========================
-# MAIN
-# =========================
 
 def main():
 
@@ -110,50 +63,48 @@ def main():
 
     odds = get_odds()
 
-    print("GAMES FOUND:", len(odds))
+    last_snapshot = load_last_snapshot()
+    last_ids = set(last_snapshot.keys())
+
+    current_snapshot = {}
 
     saved = 0
-    unique_games = set()
 
     for game in odds:
 
-        try:
+        if not game.get("bookmakers"):
+            continue
 
-            if not game.get("bookmakers"):
-                continue
+        book = game["bookmakers"][0]
+        if not book.get("markets"):
+            continue
 
-            book = game["bookmakers"][0]
+        game_id = game["id"]
 
-            if not book.get("markets"):
-                continue
+        snapshot = {
+            "time": datetime.now(UTC).isoformat(),
+            "game_id": game_id,
+            "home_team": game["home_team"],
+            "away_team": game["away_team"],
+            "odds": {}
+        }
 
-            save_snapshot(game)
+        for o in book["markets"][0]["outcomes"]:
+            snapshot["odds"][o["name"]] = o["price"]
 
-            unique_games.add(
-                f"{game['away_team']}_{game['home_team']}"
-            )
-
-            print(
-                f"SAVED: {game['away_team']} vs {game['home_team']}"
-            )
-
+        # SOLO guardar si cambió o es nuevo
+        if game_id not in last_ids:
+            save_snapshot(snapshot)
             saved += 1
 
-        except Exception as e:
-
-            print("GAME ERROR:", e)
+        current_snapshot[game_id] = snapshot
 
     send_telegram(
-        f"✅ COLLECTOR RUN\n\n"
-        f"Records processed: {saved}\n"
-        f"Unique games: {len(unique_games)}"
+        f"✅ COLLECTOR RUN\n\nNew snapshots: {saved}\nGames found: {len(odds)}"
     )
 
     print("FINISHED")
 
-# =========================
-# RUN
-# =========================
 
 if __name__ == "__main__":
     main()
