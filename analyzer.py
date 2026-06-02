@@ -96,23 +96,46 @@ def main():
 
     games = list(latest_games(history))
 
-    print("TOTAL GAMES:", len(games))
+    picks = []
 
-    report = "🏦 MLB PREDICCIONES\n\n"
+    for game in games:
+
+        result = pick_winner(game)
+
+        if not result:
+            continue
+
+        winner, prob = result
+
+        picks.append({
+            "game": game,
+            "winner": winner,
+            "prob": prob
+        })
+
+    picks.sort(key=lambda x: x["prob"], reverse=True)
+
+    report = "🔥 TOP 3 PICKS DEL DÍA\n\n"
+
+    for i, pick in enumerate(picks[:3], start=1):
+        report += (
+            f"{i}️⃣ {pick['winner']} ({pick['prob']}%)\n"
+        )
+
+    report += "\n━━━━━━━━━━━━━━━━\n\n"
+    report += "🏦 MLB PREDICCIONES\n\n"
 
     total = 0
 
-    for game in games:
+    for pick in picks:
+
+        game = pick["game"]
 
         away = game.get("away_team")
         home = game.get("home_team")
 
-        result = pick_winner(game)
-
-        if not away or not home or not result:
-            continue
-
-        winner, prob = result
+        winner = pick["winner"]
+        prob = pick["prob"]
 
         if prob >= 65:
             confidence = "🔥 ALTA"
