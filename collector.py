@@ -3,6 +3,10 @@ import json
 import requests
 from datetime import datetime, UTC
 
+# =========================
+# CONFIG
+# =========================
+
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 API_KEY = os.getenv("ODDS_API_KEY")
@@ -11,8 +15,14 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "market_history.jsonl"
 
+# =========================
+# TELEGRAM
+# =========================
 
 def send_telegram(msg):
+
+    print("TOKEN EXISTS:", bool(TOKEN))
+    print("CHAT_ID EXISTS:", bool(CHAT_ID))
 
     try:
 
@@ -25,12 +35,16 @@ def send_telegram(msg):
             timeout=20
         )
 
-        print("TELEGRAM:", r.status_code)
-        print(r.text)
+        print("TELEGRAM STATUS:", r.status_code)
+        print("TELEGRAM RESPONSE:", r.text)
 
     except Exception as e:
+
         print("TELEGRAM ERROR:", e)
 
+# =========================
+# GET ODDS
+# =========================
 
 def get_odds():
 
@@ -60,6 +74,9 @@ def get_odds():
         print("ODDS ERROR:", e)
         return []
 
+# =========================
+# SAVE SNAPSHOT
+# =========================
 
 def save_snapshot(game_id, odds):
 
@@ -72,6 +89,9 @@ def save_snapshot(game_id, odds):
     with open(HISTORY_FILE, "a") as f:
         f.write(json.dumps(snapshot) + "\n")
 
+# =========================
+# MAIN
+# =========================
 
 def main():
 
@@ -119,7 +139,6 @@ def main():
     )
 
     print("FINISHED")
-
 
 if __name__ == "__main__":
     main()
