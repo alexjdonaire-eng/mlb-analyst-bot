@@ -24,7 +24,7 @@ def send(msg):
 
 
 # =========================
-# LOAD HISTORY SAFE
+# LOAD CLEAN DATA
 # =========================
 
 def load_history():
@@ -34,17 +34,16 @@ def load_history():
         with open(HISTORY_FILE, "r") as f:
             for line in f:
                 try:
-                    data = json.loads(line)
+                    r = json.loads(line)
 
-                    # VALIDACIÓN BÁSICA
-                    if not data.get("game_id"):
+                    if "game_id" not in r:
                         continue
-                    if not data.get("odds"):
+                    if "odds" not in r:
                         continue
-                    if not data.get("home_team") or not data.get("away_team"):
+                    if "time" not in r:
                         continue
 
-                    rows.append(data)
+                    rows.append(r)
 
                 except:
                     continue
@@ -55,67 +54,57 @@ def load_history():
 
 
 # =========================
-# DEDUPLICATION ENGINE
+# GROUP BY GAME
 # =========================
 
-def deduplicate(rows):
-    seen = set()
-    clean = []
-
-    for r in rows:
-
-        key = (
-            r["game_id"],
-            r["time"],
-            str(sorted(r["odds"].items()))
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        clean.append(r)
-
-    return clean
-
-
-# =========================
-# GROUP GAMES PROPERLY
-# =========================
-
-def group_games(rows):
+def group(rows):
     games = {}
 
     for r in rows:
-        gid = r["game_id"]
-        games.setdefault(gid, []).append(r)
+        games.setdefault(r["game_id"], []).append(r)
 
-    # ordenar snapshots por tiempo
-    for gid in games:
-        games[gid].sort(key=lambda x: x["time"])
+    for g in games:
+        games[g].sort(key=lambda x: x["time"])
 
     return games
 
 
 # =========================
-# VALUE MODEL SAFE
+# CLV CALCULATION CORE
+# =========================
+
+def compute_clv(series):
+    if len(series) < 2:
+        return 0
+
+    open_odds = series[0]
+    close_odds = series[-1]
+
+    if open_odds == 0:
+        return 0
+
+    return (open_odds - close_odds) / open_odds
+
+
+# =========================
+# VALUE MODEL (conservador real)
 # =========================
 
 def model_prob(series):
     if len(series) < 3:
         return 0
 
-    avg = sum(series[-3:]) / len(series[-3:])
+    avg = sum(series[-4:]) / len(series[-4:])
     return 1 / avg
 
 
 # =========================
-# ANALYSIS ENGINE SAFE
+# ANALYSIS ENGINE (CLV CORE)
 # =========================
 
 def analyze_game(rows):
 
-    if len(rows) < 4:
+    if len(rows) < 6:
         return None
 
     teams = rows[0]["odds"].keys()
@@ -123,46 +112,51 @@ def analyze_game(rows):
 
     for team in teams:
 
-        series = []
-        for r in rows:
-            if team in r["odds"]:
-                series.append(r["odds"][team])
+        series = [r["odds"][team] for r in rows if team in r["odds"]]
 
-        # VALIDACIÓN CRÍTICA
-        if len(series) < 4:
+        if len(series) < 6:
             continue
 
-        start = series[0]
-        end = series[-1]
+        clv = compute_clv(series)
 
-        change = end - start
-        volatility = max(series) - min(series)
-
-        momentum = sum(
-            1 for i in range(1, len(series))
-            if series[i] < series[i - 1]
-        ) / (len(series) - 1)
+        open_odds = series[0]
+        close_odds = series[-1]
 
         model = model_prob(series)
-        implied = 1 / end if end != 0 else 0
+        implied = 1 / close_odds if close_odds else 0
 
         if model == 0:
             continue
 
         edge = model - implied
 
-        score = (edge * 100) + (momentum * 10) + (volatility * 0.5)
+        # =========================
+        # MARKET EFFICIENCY SCORE
+        # =========================
+        volatility = max(series) - min(series)
 
-        # 🔥 FILTRO BALANCEADO (NO OVERFITTING)
-        if edge > 0.01 and momentum > 0.45:
+        efficiency = abs(clv) * 2 + volatility * 0.5
+
+        # =========================
+        # SMART MONEY SIGNAL
+        # =========================
+        smart_money = (
+            clv > 0.015 and      # line moved in your favor
+            edge > 0.01 and      # real value
+            efficiency > 0.8     # meaningful market movement
+        )
+
+        score = (edge * 150) + (clv * 120) + efficiency
+
+        if smart_money:
 
             signals.append({
                 "team": team,
-                "start": start,
-                "end": end,
-                "change": change,
+                "open": open_odds,
+                "close": close_odds,
+                "clv": clv,
                 "edge": edge,
-                "momentum": momentum,
+                "efficiency": efficiency,
                 "score": score
             })
 
@@ -170,22 +164,13 @@ def analyze_game(rows):
 
 
 # =========================
-# MAIN
+# MAIN REPORT
 # =========================
 
 def main():
 
-    history = load_history()
-
-    print("RAW HISTORY:", len(history))
-
-    history = deduplicate(history)
-
-    print("DEDUPED:", len(history))
-
-    games = group_games(history)
-
-    print("GAMES:", len(games))
+    rows = load_history()
+    games = group(rows)
 
     ranked = []
 
@@ -198,16 +183,21 @@ def main():
 
         game = rows[-1]
 
-        text = f"⚾ {game['away_team']} vs {game['home_team']}\n\n"
+        text = f"🏦 {game['away_team']} vs {game['home_team']}\n\n"
 
         best = 0
 
         for s in signals:
 
+            direction = "📉 CLV positive steam" if s["clv"] > 0 else "📈 reverse market"
+
             text += (
                 f"🔥 {s['team']}\n"
+                f"{direction}\n"
+                f"Open → Close: {s['open']} → {s['close']}\n"
+                f"CLV: {round(s['clv']*100,2)}%\n"
                 f"Edge: {round(s['edge']*100,2)}%\n"
-                f"Momentum: {round(s['momentum'],2)}\n"
+                f"Market efficiency: {round(s['efficiency'],2)}\n"
                 f"Score: {round(s['score'],2)}\n\n"
             )
 
@@ -218,14 +208,14 @@ def main():
     ranked.sort(reverse=True, key=lambda x: x[0])
 
     if not ranked:
-        report = "🏦 DATA PIPELINE FIXED\n\n⚠️ No clean opportunities detected yet."
+        report = "🏦 CLV TRADING ENGINE\n\n⚠️ No market inefficiencies detected."
     else:
-        report = "🏦 DATA PIPELINE FIXED\n\n"
+        report = "🏦 CLV TRADING ENGINE\n\n"
         for _, text in ranked[:5]:
             report += text + "────────────────────\n\n"
 
     send(report)
-    print("PIPELINE FIXED SENT")
+    print("CLV ENGINE SENT")
 
 
 if __name__ == "__main__":
