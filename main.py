@@ -118,7 +118,22 @@ def match_games(mlb, odds):
     return matched
 
 # =========================
-# EDGE CALC
+# CALIBRATION
+# =========================
+
+def calibrate_prob(model_prob, market_prob):
+    return (0.7 * market_prob) + (0.3 * model_prob)
+
+# =========================
+# EXPECTED VALUE
+# =========================
+
+def expected_value(prob, odds):
+    payout = odds - 1
+    return (prob * payout) - (1 - prob)
+
+# =========================
+# CORE EDGE ENGINE
 # =========================
 
 def get_edge(game):
@@ -143,40 +158,58 @@ def get_edge(game):
         if not home_odds or not away_odds:
             return None
 
-        ph = 1 / home_odds
-        pa = 1 / away_odds
+        # MARKET PROBABILITY (vig removed)
+        ph_mkt = 1 / home_odds
+        pa_mkt = 1 / away_odds
 
-        total = ph + pa
-        ph /= total
-        pa /= total
+        total = ph_mkt + pa_mkt
+        ph_mkt /= total
+        pa_mkt /= total
 
-        # ajuste pitcher simple
-        if game["home_pitcher"] != "UNKNOWN":
-            ph += 0.01
+        # MODEL PROBABILITY (simple pitcher bias)
+        ph_model = ph_mkt + 0.015 if game["home_pitcher"] != "UNKNOWN" else ph_mkt
+        pa_model = pa_mkt
 
-        if ph > pa:
-            return game["home_team"], ph - pa, ph, pa
+        # HOME SIDE
+        if ph_model > pa_model:
+
+            calibrated = calibrate_prob(ph_model, ph_mkt)
+            ev = expected_value(calibrated, home_odds)
+            edge = calibrated - ph_mkt
+
+            return game["home_team"], edge, ev, calibrated
+
+        # AWAY SIDE
         else:
-            return game["away_team"], pa - ph, pa, ph
+
+            calibrated = calibrate_prob(pa_model, pa_mkt)
+            ev = expected_value(calibrated, away_odds)
+            edge = calibrated - pa_mkt
+
+            return game["away_team"], edge, ev, calibrated
 
     except:
         return None
 
 # =========================
-# SCORING SYSTEM
+# VALUE FILTER
 # =========================
 
-def calculate_score(edge, confidence, stability, risk):
-    return (edge * 100) + confidence + stability - risk
+def is_value(edge, ev):
+
+    if ev < 0:
+        return False
+
+    if edge < 0.015:
+        return False
+
+    return True
 
 # =========================
 # KELLY STAKE
 # =========================
 
 def kelly(edge):
-
-    if edge <= 0:
-        return 0.01
 
     k = edge / 2
 
@@ -188,86 +221,19 @@ def kelly(edge):
     return round(k, 3)
 
 # =========================
-# BUILD BETS
-# =========================
-
-def build_bets(raw):
-
-    bets = []
-
-    for r in raw:
-
-        edge = r["edge"]
-
-        score = calculate_score(
-            edge,
-            r.get("confidence", 55),
-            r.get("stability", 50),
-            r.get("risk", 20)
-        )
-
-        bets.append({
-            "game": r["game"],
-            "pick": r["pick"],
-            "edge": edge,
-            "score": score,
-            "stake": kelly(edge),
-            "home_prob": r["home_prob"],
-            "away_prob": r["away_prob"]
-        })
-
-    return bets
-
-# =========================
-# RANKING
-# =========================
-
-def rank_bets(bets):
-    return sorted(bets, key=lambda x: x["score"], reverse=True)
-
-# =========================
-# OUTPUT
-# =========================
-
-def build_report(bets):
-
-    report = "🏦 MLB V10 AUTO BET RANKING\n\n"
-
-    top = bets[:3]
-
-    for i, b in enumerate(top, 1):
-
-        g = b["game"]
-
-        risk = "🟢 LOW" if b["stake"] <= 0.02 else "🟡 MEDIUM" if b["stake"] <= 0.04 else "🔴 HIGH"
-
-        report += (
-            f"🔥 TOP {i}\n"
-            f"⚾ {g['away_team']} vs {g['home_team']}\n"
-            f"🎯 Pick: {b['pick']}\n"
-            f"📊 Edge: {round(b['edge']*100,2)}%\n"
-            f"⭐ Score: {round(b['score'],2)}\n"
-            f"💰 Stake: {round(b['stake']*100,1)}%\n"
-            f"⚠️ Risk: {risk}\n\n"
-            f"────────────────────\n\n"
-        )
-
-    return report
-
-# =========================
 # MAIN
 # =========================
 
 def main():
 
-    print("🚀 V10 AUTO BET RANKING SYSTEM")
+    print("🚀 V10.2 CALIBRATED EDGE SYSTEM")
 
     mlb = get_mlb_games()
     odds = get_odds()
 
     games = match_games(mlb, odds)
 
-    raw_bets = []
+    bets = []
 
     for g in games:
 
@@ -275,27 +241,44 @@ def main():
         if not result:
             continue
 
-        pick, edge, home_p, away_p = result
+        pick, edge, ev, prob = result
 
-        raw_bets.append({
+        if not is_value(edge, ev):
+            continue
+
+        bets.append({
             "game": g,
             "pick": pick,
             "edge": edge,
-            "home_prob": home_p,
-            "away_prob": away_p,
-            "confidence": 55,
-            "stability": 50,
-            "risk": 20
+            "ev": ev,
+            "prob": prob,
+            "stake": kelly(edge)
         })
 
-    bets = build_bets(raw_bets)
+    bets.sort(key=lambda x: x["ev"], reverse=True)
 
-    ranked = rank_bets(bets)
+    report = "🏦 MLB V10.2 CALIBRATED EDGE SYSTEM\n\n"
 
-    report = build_report(ranked)
+    if not bets:
+        report += "⚠️ No value bets today\n"
+
+    for b in bets[:3]:
+
+        g = b["game"]
+
+        report += (
+            f"🔥 TOP BET\n"
+            f"⚾ {g['away_team']} vs {g['home_team']}\n"
+            f"🎯 Pick: {b['pick']}\n"
+            f"📊 Edge: {round(b['edge']*100,2)}%\n"
+            f"💰 EV: {round(b['ev'],4)}\n"
+            f"📈 Prob: {round(b['prob']*100,2)}%\n"
+            f"💵 Stake: {round(b['stake']*100,1)}%\n\n"
+            f"────────────────────\n\n"
+        )
 
     send(report)
-    print("✅ V10 SENT")
+    print("✅ V10.2 SENT")
 
 if __name__ == "__main__":
     main()
