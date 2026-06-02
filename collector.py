@@ -113,6 +113,7 @@ def main():
     print("GAMES FOUND:", len(odds))
 
     saved = 0
+    unique_games = set()
 
     for game in odds:
 
@@ -128,6 +129,10 @@ def main():
 
             save_snapshot(game)
 
+            unique_games.add(
+                f"{game['away_team']}_{game['home_team']}"
+            )
+
             print(
                 f"SAVED: {game['away_team']} vs {game['home_team']}"
             )
@@ -139,7 +144,9 @@ def main():
             print("GAME ERROR:", e)
 
     send_telegram(
-        f"✅ COLLECTOR RUN\n\nGames processed: {saved}"
+        f"✅ COLLECTOR RUN\n\n"
+        f"Records processed: {saved}\n"
+        f"Unique games: {len(unique_games)}"
     )
 
     print("FINISHED")
