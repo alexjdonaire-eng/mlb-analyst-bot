@@ -3,6 +3,8 @@ import os
 
 HISTORY_FILE = "market_history.jsonl"
 
+START_BANKROLL = 1000
+
 
 # =========================
 # LOAD DATA
@@ -10,14 +12,17 @@ HISTORY_FILE = "market_history.jsonl"
 
 def load():
     rows = []
-    with open(HISTORY_FILE, "r") as f:
-        for line in f:
-            try:
-                r = json.loads(line)
-                if "game_id" in r and "odds" in r:
-                    rows.append(r)
-            except:
-                continue
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                    if "game_id" in r and "odds" in r:
+                        rows.append(r)
+                except:
+                    continue
+    except:
+        pass
     return rows
 
 
@@ -37,7 +42,7 @@ def group(rows):
 
 
 # =========================
-# CLV
+# CORE METRICS
 # =========================
 
 def clv(series):
@@ -46,63 +51,58 @@ def clv(series):
     return (series[0] - series[-1]) / series[0]
 
 
-# =========================
-# EDGE MODEL (same logic as live system)
-# =========================
-
 def edge(series):
     if len(series) < 4:
         return 0
-
     avg = sum(series[-5:]) / len(series[-5:])
-    model = 1 / avg
-    implied = 1 / series[-1]
-
-    return model - implied
+    return (1 / avg) - (1 / series[-1])
 
 
 # =========================
-# SIMULATED RETURN ENGINE
+# SIMULATED TRADE ENGINE
 # =========================
 
-def simulate_trade(edge, clv_value):
+def simulate(edge_val, clv_val):
 
-    # hedge fund assumption:
-    # CLV + edge predicts long term EV
+    # hedge fund logic:
+    # CLV + edge = expected profitability signal
 
-    expected_return = (edge * 100) + (clv_value * 80)
+    score = (edge_val * 120) + (clv_val * 100)
 
-    # normalize risk
-    if expected_return > 5:
-        return 1.2  # big win
-    elif expected_return > 2:
+    if score > 5:
+        return 1.15
+    elif score > 2:
         return 1.05
-    elif expected_return > 0:
+    elif score > 0:
         return 1.01
-    elif expected_return > -2:
+    elif score > -2:
         return 0.98
     else:
         return 0.95
 
 
 # =========================
-# BACKTEST ENGINE
+# DASHBOARD ENGINE
 # =========================
 
-def backtest():
+def dashboard():
 
     rows = load()
     games = group(rows)
 
-    bankroll = 1000
+    bankroll = START_BANKROLL
     peak = bankroll
-    max_dd = 0
 
     bets = 0
     wins = 0
 
-    total_clv = 0
-    total_edge = 0
+    equity_curve = [bankroll]
+
+    clv_list = []
+    edge_list = []
+
+    worst_streak = 0
+    current_streak = 0
 
     for gid, rows in games.items():
 
@@ -118,52 +118,61 @@ def backtest():
             if len(series) < 6:
                 continue
 
-            clv_value = clv(series)
-            e = edge(series)
+            clv_val = clv(series)
+            edge_val = edge(series)
 
-            # filter hedge fund style
-            if clv_value < 0.005 or e < 0.005:
+            if clv_val < 0.005 or edge_val < 0.005:
                 continue
 
-            ret = simulate_trade(e, clv_value)
+            ret = simulate(edge_val, clv_val)
 
             bankroll *= ret
+            equity_curve.append(bankroll)
 
             bets += 1
 
             if ret > 1:
                 wins += 1
+                current_streak = 0
+            else:
+                current_streak += 1
+                worst_streak = max(worst_streak, current_streak)
 
-            total_clv += clv_value
-            total_edge += e
+            clv_list.append(clv_val)
+            edge_list.append(edge_val)
 
-            # drawdown tracking
-            if bankroll > peak:
-                peak = bankroll
+            peak = max(peak, bankroll)
 
-            dd = (peak - bankroll) / peak
-            max_dd = max(max_dd, dd)
+    # =========================
+    # METRICS
+    # =========================
+
+    roi = (bankroll - START_BANKROLL) / START_BANKROLL * 100
+    winrate = (wins / bets * 100) if bets else 0
+    avg_clv = sum(clv_list) / len(clv_list) if clv_list else 0
+    avg_edge = sum(edge_list) / len(edge_list) if edge_list else 0
+    drawdown = (peak - bankroll) / peak * 100 if peak else 0
 
     # =========================
     # REPORT
     # =========================
 
-    if bets == 0:
-        print("NO VALID TRADES FOUND")
-        return
+    print("\n🏦 QUANT DASHBOARD PRO\n")
+    print("━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"Bets: {bets}")
+    print(f"Winrate: {round(winrate,2)}%")
+    print(f"ROI: {round(roi,2)}%")
+    print(f"Final bankroll: {round(bankroll,2)}")
+    print("━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"Avg CLV: {round(avg_clv,4)}")
+    print(f"Avg Edge: {round(avg_edge,4)}")
+    print(f"Max Drawdown: {round(drawdown,2)}%")
+    print(f"Worst losing streak: {worst_streak}")
+    print("━━━━━━━━━━━━━━━━━━━━━━")
 
-    print("\n🏦 BACKTEST HEDGE FUND REPORT\n")
-
-    print("Bets:", bets)
-    print("Win rate (simulated):", round(wins / bets * 100, 2), "%")
-    print("Final bankroll:", round(bankroll, 2))
-    print("ROI:", round((bankroll - 1000) / 1000 * 100, 2), "%")
-
-    print("Avg CLV:", round(total_clv / bets, 4))
-    print("Avg Edge:", round(total_edge / bets, 4))
-
-    print("Max Drawdown:", round(max_dd * 100, 2), "%")
+    print("\n📈 EQUITY CURVE (last 10 points):")
+    print([round(x,2) for x in equity_curve[-10:]])
 
 
 if __name__ == "__main__":
-    backtest()
+    dashboard()
