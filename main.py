@@ -26,14 +26,24 @@ def send(msg):
     )
 
 # =========================
-# SAVE SNAPSHOT (TIME SERIES)
+# SAVE SNAPSHOT (WITH TIME LABEL)
 # =========================
 
 def save_snapshot(game_id, odds):
 
+    hour = datetime.utcnow().hour
+
+    if hour < 12:
+        phase = "OPEN"
+    elif hour < 18:
+        phase = "MID"
+    else:
+        phase = "CLOSE"
+
     snapshot = {
         "time": datetime.utcnow().isoformat(),
         "game_id": game_id,
+        "phase": phase,
         "odds": odds
     }
 
@@ -52,80 +62,76 @@ def load_history(game_id):
         with open(HISTORY_FILE, "r") as f:
             for line in f:
                 obj = json.loads(line)
+
                 if obj["game_id"] == game_id:
                     history.append(obj)
+
     except:
         pass
 
     return history
 
 # =========================
-# STEAM VELOCITY
+# GET PHASE DATA
 # =========================
 
-def steam_velocity(history, team):
+def get_phase_data(history, phase):
 
-    if len(history) < 2:
-        return 0
-
-    try:
-
-        first = history[0]["odds"][team]
-        last = history[-1]["odds"][team]
-
-        move = (first - last) / first
-
-        speed = move / len(history)
-
-        return speed
-
-    except:
-        return 0
-
-# =========================
-# CLV CURVE
-# =========================
-
-def clv_curve(history, team):
-
-    values = []
-
-    try:
-
-        for h in history:
-            odds = h["odds"][team]
-            prob = 1 / odds
-            values.append(prob)
-
-        if len(values) < 2:
-            return 0
-
-        return values[-1] - values[0]
-
-    except:
-        return 0
-
-# =========================
-# SHARP SIGNAL
-# =========================
-
-def sharp_signal(speed, clv):
-
-    if speed > 0.02 and clv > 0.01:
-        return "SHARP MONEY CONFIRMED"
-
-    if speed > 0.01:
-        return "MODERATE STEAM"
+    for h in history:
+        if h.get("phase") == phase:
+            return h["odds"]
 
     return None
 
 # =========================
-# EDGE V11.6
+# STEAM (PHASE-BASED)
 # =========================
 
-def edge_v116(model_prob, market_prob, clv):
+def steam_phase(open_odds, close_odds, team):
 
-    return (model_prob - market_prob) + (clv * 0.6)
+    try:
+
+        open_p = open_odds[team]
+        close_p = close_odds[team]
+
+        move = (open_p - close_p) / open_p
+
+        if move > 0.03:
+            return "SHARP STEAM"
+        elif move > 0.015:
+            return "MODERATE STEAM"
+
+        return None
+
+    except:
+        return None
+
+# =========================
+# CLV REAL (OPEN → CLOSE)
+# =========================
+
+def clv_real(open_odds, close_odds, team):
+
+    try:
+
+        open_p = open_odds[team]
+        close_p = close_odds[team]
+
+        open_prob = 1 / open_p
+        close_prob = 1 / close_p
+
+        return close_prob - open_prob
+
+    except:
+        return 0
+
+# =========================
+# EDGE FINAL
+# =========================
+
+def edge_v117(model_prob, market_prob, clv):
+
+    return (model_prob - market_prob) + (clv * 0.7)
 
 # =========================
 # GET ODDS
@@ -159,53 +165,49 @@ def analyze_game(game):
         home = game["home_team"]
         away = game["away_team"]
 
-        home_odds = None
-        away_odds = None
-
-        for o in outs:
-            if o["name"] == home:
-                home_odds = o["price"]
-            if o["name"] == away:
-                away_odds = o["price"]
-
-        if not home_odds or not away_odds:
-            return None
-
-        current_odds = {
-            home: home_odds,
-            away: away_odds
+        current = {
+            home: None,
+            away: None
         }
 
-        # SAVE SNAPSHOT (for time series)
-        save_snapshot(game["id"], current_odds)
+        for o in outs:
+            current[o["name"]] = o["price"]
+
+        save_snapshot(game["id"], current)
 
         history = load_history(game["id"])
 
-        if not history:
-            return None
+        open_odds = get_phase_data(history, "OPEN")
+        mid_odds = get_phase_data(history, "MID")
+        close_odds = get_phase_data(history, "CLOSE")
 
-        latest = history[-1]["odds"]
+        # fallback
+        if not open_odds:
+            open_odds = current
+        if not close_odds:
+            close_odds = current
 
         results = []
 
-        for team in latest.keys():
+        for team in current.keys():
 
-            speed = steam_velocity(history, team)
-            clv = clv_curve(history, team)
-            signal = sharp_signal(speed, clv)
+            # MARKET PROB
+            market_prob = 1 / current[team]
 
-            market_prob = 1 / latest[team]
-            model_prob = market_prob + (0.01 if team == home else 0)
+            # SIMPLE MODEL (placeholder mejorable luego)
+            model_prob = market_prob + 0.01
 
-            edge = edge_v116(model_prob, market_prob, clv)
+            clv = clv_real(open_odds, close_odds, team)
+            steam = steam_phase(open_odds, close_odds, team)
+
+            edge = edge_v117(model_prob, market_prob, clv)
 
             results.append({
                 "game": game,
                 "team": team,
                 "edge": edge,
-                "speed": speed,
                 "clv": clv,
-                "signal": signal,
+                "steam": steam,
                 "score": edge * 100
             })
 
@@ -220,7 +222,7 @@ def analyze_game(game):
 
 def main():
 
-    print("🚀 V11.6 MARKET TIME WINDOW ENGINE")
+    print("🚀 V11.7 TIME ENGINE FIX")
 
     odds = get_odds()
 
@@ -228,20 +230,20 @@ def main():
 
     for game in odds:
 
-        result = analyze_game(game)
+        res = analyze_game(game)
 
-        if not result:
+        if not res:
             continue
 
-        for r in result:
+        for r in res:
             all_results.append(r)
 
     all_results.sort(key=lambda x: x["score"], reverse=True)
 
-    report = "🏦 MLB V11.6 MARKET INTELLIGENCE\n\n"
+    report = "🏦 MLB V11.7 TIME ENGINE\n\n"
 
     if not all_results:
-        report += "⚠️ No market movement detected\n"
+        report += "⚠️ No market movement detected yet\n"
 
     for r in all_results[:3]:
 
@@ -252,15 +254,14 @@ def main():
             f"⚾ {g['away_team']} vs {g['home_team']}\n"
             f"🎯 Pick: {r['team']}\n"
             f"📊 Edge: {round(r['edge']*100,2)}%\n"
-            f"📈 CLV Curve: {round(r['clv']*100,2)}%\n"
-            f"⚡ Steam Speed: {round(r['speed'],4)}\n"
-            f"🔥 Signal: {r['signal']}\n"
+            f"📈 CLV: {round(r['clv']*100,2)}%\n"
+            f"🔥 Steam: {r['steam']}\n"
             f"⭐ Score: {round(r['score'],2)}\n\n"
             f"────────────────────\n\n"
         )
 
     send(report)
-    print("✅ V11.6 SENT")
+    print("✅ V11.7 SENT")
 
 if __name__ == "__main__":
     main()
