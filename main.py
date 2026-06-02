@@ -47,7 +47,7 @@ def get_games():
     return r.json()
 
 # =========================
-# FILTER TODAY (FIX UTC)
+# FILTER TODAY (TEMPORAL)
 # =========================
 
 def is_today(game):
@@ -109,9 +109,11 @@ def pick_model(game):
 
 def main():
 
-    print("🚀 MLB FOUNDATION STABLE V7.2")
+    print("🚀 MLB FOUNDATION STABLE V7.2 DIAGNOSTIC")
 
     games = get_games()
+
+    print("TOTAL API GAMES:", len(games))
 
     report = "🏦 MLB QUANT ALERT\n\n"
 
@@ -120,6 +122,14 @@ def main():
     seen_games = set()
 
     for game in games:
+
+        print(
+            game.get("away_team"),
+            "vs",
+            game.get("home_team"),
+            "-",
+            game.get("commence_time")
+        )
 
         if not is_today(game):
             continue
