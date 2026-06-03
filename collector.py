@@ -11,25 +11,20 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "market_history.jsonl"
 
-# =========================
-# TELEGRAM
-# =========================
 def send_telegram(msg):
+    """Envía mensaje a Telegram con manejo de errores"""
     try:
-        r = requests.post(
+        print(f"📨 Enviando Telegram: {msg[:50]}...")
+        requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": msg},
-            timeout=15
+            timeout=20
         )
-        if r.status_code != 200:
-            print("⚠️ Telegram error:", r.text)
     except Exception as e:
-        print("⚠️ Telegram exception:", e)
+        print("❌ Error enviando a Telegram:", e)
 
-# =========================
-# FETCH ODDS
-# =========================
-def fetch_odds():
+def get_odds():
+    """Obtiene probabilidades desde la API"""
     try:
         r = requests.get(
             ODDS_URL,
@@ -39,63 +34,53 @@ def fetch_odds():
                 "markets": "h2h",
                 "oddsFormat": "decimal"
             },
-            timeout=20
+            timeout=30
         )
-        if r.status_code != 200:
-            print("⚠️ Odds API error:", r.status_code, r.text)
-            return []
+        r.raise_for_status()
         data = r.json()
-        print(f"📊 Fetched {len(data)} games from Odds API")
+        print(f"⚡ Odds obtenidas: {len(data)} juegos")
         return data
     except Exception as e:
-        print("⚠️ Odds fetch exception:", e)
+        print("❌ Error al obtener odds:", e)
+        send_telegram("❌ Collector ERROR al obtener odds")
         return []
 
-# =========================
-# LOAD LAST SNAPSHOT
-# =========================
 def load_last_snapshot():
     try:
-        if not os.path.exists(HISTORY_FILE):
-            return {}
         with open(HISTORY_FILE, "r") as f:
             lines = f.readlines()
             if not lines:
                 return {}
             return json.loads(lines[-1])
     except Exception as e:
-        print("⚠️ Load snapshot exception:", e)
+        print("⚠️ No se pudo cargar snapshot:", e)
         return {}
 
-# =========================
-# SAVE SNAPSHOT
-# =========================
-def save_snapshot(snapshot):
+def save_snapshot(data):
     try:
         with open(HISTORY_FILE, "a") as f:
-            f.write(json.dumps(snapshot) + "\n")
+            f.write(json.dumps(data) + "\n")
+        print(f"💾 Snapshot guardado: {data['home_team']} vs {data['away_team']}")
     except Exception as e:
-        print("⚠️ Save snapshot exception:", e)
+        print("❌ Error guardando snapshot:", e)
+        send_telegram("❌ Collector ERROR guardando snapshot")
 
-# =========================
-# MAIN COLLECTOR
-# =========================
 def main():
     print("🚨 COLLECTOR STARTED")
-    send_telegram("🚨 COLLECTOR STARTED")  # debug guarantee
+    send_telegram("🚨 Collector started")
 
-    odds_data = fetch_odds()
-    if not odds_data:
-        send_telegram("⚠️ No data fetched from Odds API")
+    odds = get_odds()
+    if not odds:
+        send_telegram("⚠️ No se obtuvieron juegos")
         return
 
     last_snapshot = load_last_snapshot()
-    last_ids = set(last_snapshot.keys()) if last_snapshot else set()
+    last_ids = set(last_snapshot.keys() if last_snapshot else [])
 
-    saved = 0
     current_snapshot = {}
+    saved = 0
 
-    for game in odds_data:
+    for game in odds:
         if not game.get("bookmakers"):
             continue
         book = game["bookmakers"][0]
@@ -111,16 +96,16 @@ def main():
             "odds": {o["name"]: o["price"] for o in book["markets"][0]["outcomes"]}
         }
 
-        current_snapshot[game_id] = snapshot
-
         if game_id not in last_ids:
             save_snapshot(snapshot)
             saved += 1
 
-    msg = f"✅ COLLECTOR RUN\nNew snapshots: {saved}\nTotal games fetched: {len(odds_data)}"
+        current_snapshot[game_id] = snapshot
+
+    msg = f"✅ COLLECTOR RUN\n\nNew snapshots: {saved}\nGames found: {len(odds)}"
     print(msg)
     send_telegram(msg)
-    print("FINISHED")
+    print("🚨 COLLECTOR FINISHED")
 
 if __name__ == "__main__":
     main()
