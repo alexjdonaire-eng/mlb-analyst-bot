@@ -7,9 +7,9 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode":"HTML"}
     try:
-        requests.post(url, data=payload, timeout=10)
+        requests.post(url,data=payload,timeout=10)
     except:
         pass
 
@@ -32,10 +32,16 @@ def format_game(g):
     return msg
 
 def main():
-    games = run_analyzer()
+    games, top5 = run_analyzer()
+    # Enviar cada juego
     for g in games:
         send_telegram(format_game(g))
-    print("✅ Messages sent to Telegram")
+    # Enviar Top 5 Picks
+    top5_msg = "🔥 TOP 5 PICKS DEL DÍA 🔥\n"
+    for i, g in enumerate(top5,1):
+        top5_msg += f"{i}️⃣ {g['pick']} ({g['confidence']}%)\n"
+    send_telegram(top5_msg)
+    print("✅ Mensajes enviados a Telegram")
 
 if __name__ == "__main__":
     main()
