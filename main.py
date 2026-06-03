@@ -1,93 +1,74 @@
 import os
 import requests
 from datetime import datetime
-from analyzer import run_analyzer  # tu función que genera picks con pitchers reales
+from analyzer import generate_report  # tu función que genera los picks
 
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =========================
-# FUNCIONES TELEGRAM
+# FUNCIONES
 # =========================
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-    except Exception as e:
-        print(f"Error enviando mensaje: {e}")
+def send_telegram(message: str):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    response = requests.post(url, data=payload)
+    return response.status_code, response.text
 
-# =========================
-# FORMATEO JUEGO
-# =========================
 def format_game(game):
-    home = game.get("home_team", "TBD")
-    away = game.get("away_team", "TBD")
-    pick = game.get("pick", "TBD")
-    confidence = game.get("confidence", 0)
-    edge = game.get("edge", 0)
-    steam = game.get("steam", "NEUTRAL")
-    market_move = game.get("market_move", "N/A")
-    score = game.get("score", 0)
-    level = game.get("level", "LEAN")
+    # Score balanceado según V5.11
+    pitcher_component = game.get("pitcher_score", 0)
+    market_component = game.get("market_move", 0) * -0.15
+    steam_component = 2 if game.get("steam") == "🔥 SHARP MONEY IN" else -1 if game.get("steam") == "⚪ PUBLIC HEAVY" else 0
+    score = round(50 + pitcher_component + market_component + steam_component, 2)
+    
+    # Nivel según score
+    if score >= 70:
+        level = "🔥 ELITE"
+    elif score >= 60:
+        level = "✅ STRONG"
+    else:
+        level = "⚠️ LEAN"
+    
+    # Evitar picks débiles
+    pick_text = game.get("pick") if abs(score - 50) >= 2 else "NO BET"
 
-    # Pitchers reales
-    home_pitcher = game.get("home_pitcher", {"name":"TBD","ERA":"-","WHIP":"-"})
-    away_pitcher = game.get("away_pitcher", {"name":"TBD","ERA":"-","WHIP":"-"})
-    pitchers_info = f"{home_pitcher['name']} (ERA {home_pitcher['ERA']}, WHIP {home_pitcher['WHIP']}) vs {away_pitcher['name']} (ERA {away_pitcher['ERA']}, WHIP {away_pitcher['WHIP']})"
+    # Pitchers
+    home_pitcher = game.get("home_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
+    away_pitcher = game.get("away_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
 
-    text = (
-        f"⚾ {home} vs {away}\n\n"
-        f"🎯 Pick: {pick}\n"
-        f"📊 Confianza: {confidence:.2f}%\n"
-        f"📈 Edge: {edge:.2f}%\n"
-        f"📡 Steam: {steam}\n"
-        f"📉 Market Move: {market_move}\n"
-        f"🧾 Pitchers: {pitchers_info}\n"
-        f"🧠 Score: {score:.2f}\n"
+    message = (
+        f"⚾ {game.get('home_team')} vs {game.get('away_team')}\n\n"
+        f"🎯 Pick: {pick_text}\n"
+        f"📊 Confianza: {game.get('confidence', 50)}%\n"
+        f"📈 Edge: {game.get('edge', 0)}%\n"
+        f"📡 Steam: {game.get('steam', '⚪ NEUTRAL')}\n"
+        f"📉 Market Move: {game.get('market_move', 0)}\n"
+        f"🧾 Pitchers: {home_pitcher['name']} (ERA {home_pitcher['ERA']}, WHIP {home_pitcher['WHIP']}) "
+        f"vs {away_pitcher['name']} (ERA {away_pitcher['ERA']}, WHIP {away_pitcher['WHIP']})\n"
+        f"🧠 Score: {score}\n"
         f"🏷 Nivel: {level}\n"
-        "━━━━━━━━━━━━━━"
+        f"━━━━━━━━━━━━━━"
     )
-    return text
+    return message
 
-# =========================
-# MAIN
-# =========================
 def main():
-    print("🔥 ANALYZER VERSION V5.10 FULL PRO START")
-    try:
-        # run_analyzer retorna lista de juegos con toda la info
-        games = run_analyzer()
-    except Exception as e:
-        print(f"❌ Error analizando juegos: {e}")
-        games = []
-
+    print("🔥 MLB SHARP MONEY V5.11 FULL PRO START")
+    games = generate_report()  # devuelve lista de dicts con los datos de cada juego
     if not games:
-        print("❌ No hay juegos para reportar")
+        print("❌ No games loaded")
         return
 
-    # Enviar cada juego por Telegram
     for game in games:
-        message = format_game(game)
-        send_telegram_message(message)
-        print(f"✅ Enviado a Telegram: {game.get('home_team', 'TBD')} vs {game.get('away_team', 'TBD')}")
+        msg = format_game(game)
+        status_code, text = send_telegram(msg)
+        print(f"Sent: {game.get('home_team')} vs {game.get('away_team')} -> Status: {status_code}")
 
-    # Top 5 picks
-    top5 = sorted(games, key=lambda x: x.get("confidence", 0), reverse=True)[:5]
-    top5_text = "🔥 TOP 5 PICKS\n\n"
-    for i, g in enumerate(top5, start=1):
-        top5_text += f"{i}️⃣ {g.get('pick', 'TBD')} ({g.get('confidence',0):.2f}%)\n"
-    send_telegram_message(top5_text)
+    print("🏦 MLB SHARP MONEY V5.11 FULL PRO COMPLETED")
 
-    print("🏦 MLB SHARP MONEY V5.10 FULL PRO COMPLETED")
-
+# =========================
 if __name__ == "__main__":
     main()
