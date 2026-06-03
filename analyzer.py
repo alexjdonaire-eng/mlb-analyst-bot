@@ -4,7 +4,10 @@ def fetch_pitcher_stats(player_id):
     if not player_id:
         return {"ERA":"-", "WHIP":"-"}
     try:
-        res = requests.get(f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching", timeout=15)
+        res = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
+            timeout=15
+        )
         data = res.json()
         stats = data["stats"][0]["splits"][0]["stat"]
         return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
@@ -40,25 +43,46 @@ def analyze_games(schedule_data, odds_data):
                 away_pitcher = {"name": ap.get("fullName","TBD")}
                 away_pitcher.update(fetch_pitcher_stats(ap.get("id")))
 
-                # Lógica básica de pick y confianza
-                # Aquí puedes reemplazar con tu modelo real
-                confidence = round(40 + 30*0.5,2)  # Ejemplo: 55%
-                pick = home if confidence < 50 else away
-                total = round(7 + 2*(confidence/100),1)  # Total carreras aproximado
+                # Penalizar confianza si hay pitchers desconocidos
+                confidence = round(50, 2)
+                if home_pitcher["name"] == "TBD" or away_pitcher["name"] == "TBD":
+                    confidence -= 8
+
+                # Elegir pick según confianza
+                pick = away if confidence >= 50 else home
+
+                # Ajustar totales de carreras según ERA combinada
+                try:
+                    home_era = float(home_pitcher["ERA"])
+                    away_era = float(away_pitcher["ERA"])
+                    combined_era = home_era + away_era
+                    if combined_era <= 5:
+                        total = 7.5
+                    elif combined_era <= 7:
+                        total = 8.5
+                    else:
+                        total = 9.5
+                except:
+                    total = 8.5  # default
+
+                # Hándicap realista
                 handicap = -1.5 if pick==away else 1.5
+                if confidence < 55:
+                    recommended = "NO JUGAR"
+                else:
+                    recommended = pick
 
                 # Nivel según confianza
-                if confidence >= 65:
+                if confidence >= 70:
                     level = "🔥 ELITE"
-                elif confidence >= 58:
+                elif confidence >= 60:
                     level = "✅ FUERTE"
-                elif confidence >= 52:
+                elif confidence >= 55:
                     level = "⚠️ LEAN"
                 else:
                     level = "🚫 PASAR"
 
-                recommended = pick if confidence >= 52 else "NO JUGAR"
-
+                # Construir reporte
                 report.append({
                     "home_team": home,
                     "away_team": away,
@@ -71,7 +95,7 @@ def analyze_games(schedule_data, odds_data):
                     "level": level,
                     "recommended": recommended
                 })
-            except Exception as e:
+            except:
                 continue
 
     return report
