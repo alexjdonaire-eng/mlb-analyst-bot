@@ -3,15 +3,12 @@ import requests
 import collector
 import analyzer
 
-# =========================
-# TELEGRAM CONFIG
-# =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 # =========================
-# SEND MESSAGE
+# TELEGRAM SEND
 # =========================
 def send(msg):
     try:
@@ -28,7 +25,7 @@ def send(msg):
 
 
 # =========================
-# FORMAT GAME MESSAGE
+# FORMAT GAME (V5.8)
 # =========================
 def format_game(r):
 
@@ -37,7 +34,8 @@ def format_game(r):
         f"🎯 Pick: {r['pick']}\n"
         f"📊 Confianza: {r['probability']}%\n"
         f"📈 Edge: {r['edge']}%\n"
-        f"📡 Steam: {r['steam']}\n"
+        f"📡 Steam: {r.get('steam','⚪ NEUTRAL')}\n"
+        f"📉 Market Move: {r.get('movement','N/A')}\n"
         f"🧾 Pitchers: {r.get('pitcher','TBD')}\n"
         f"🧠 Score: {r.get('score','N/A')}\n"
         f"🏷 Nivel: {r['level']}\n"
@@ -46,16 +44,16 @@ def format_game(r):
 
 
 # =========================
-# MAIN
+# MAIN ENGINE
 # =========================
 def main():
 
-    print("🏦 SHARP MONEY V5.7 START")
+    print("🏦 SHARP MONEY V5.8 FULL PRO START")
 
-    # 1. COLLECT DATA
+    # 1. COLLECT
     games = collector.run()
 
-    # 2. ANALYZE DATA (CORRECT IMPORT)
+    # 2. ANALYZE (V5.8 EXPECTS ENRICHED DATA)
     report = analyzer.run(games)
 
     print("📊 Games loaded:", len(report))
@@ -64,45 +62,52 @@ def main():
         print("❌ No report generated")
         return
 
-    # 3. SORT BY SCORE OR PROBABILITY
+    # =========================
+    # SORT BY EDGE + MARKET QUALITY
+    # =========================
     report = sorted(
         report,
-        key=lambda x: x.get("score", x["probability"]),
+        key=lambda x: (
+            x.get("score", x["probability"]) +
+            x.get("edge", 0) * 0.5 +
+            (2 if x.get("steam") == "🔥 SHARP MONEY IN" else 0) +
+            (1.5 if x.get("movement", 0) > 2 else 0)
+        ),
         reverse=True
     )
 
     # =========================
-    # SEND EACH GAME (1 MESSAGE)
+    # SEND EACH GAME (1 MSG)
     # =========================
     for r in report:
 
-        message = format_game(r)
-        send(message)
+        msg = format_game(r)
+        send(msg)
 
         print(f"✅ Sent: {r['game']}")
 
     # =========================
-    # TOP PICKS SUMMARY
+    # TOP PICKS SUMMARY (V5.8)
     # =========================
     top5 = report[:5]
 
-    summary = "🏦 MLB SHARP MONEY V5.7\n\n🔥 TOP 5 PICKS\n\n"
+    summary = "🏦 MLB SHARP MONEY V5.8 FULL PRO\n\n🔥 TOP 5 MARKET PICKS\n\n"
 
     for i, r in enumerate(top5, 1):
         summary += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
 
-    summary += "\n💎 COMBINADA DEL DÍA\n\n"
+    summary += "\n💎 COMBINADA DEL DÍA (FILTERED EV+)\n\n"
 
     for r in report:
-        if r["probability"] >= 59:
+        if r["probability"] >= 59 and r.get("edge", 0) >= 7:
             summary += f"✅ {r['pick']}\n"
 
     if top5:
-        summary += f"\n🔥 Mejor Pick:\n{top5[0]['pick']} ({top5[0]['probability']}%)"
+        summary += f"\n🔥 BEST VALUE PICK:\n{top5[0]['pick']} ({top5[0]['probability']}%)"
 
     send(summary)
 
-    print("🏁 Cycle complete")
+    print("🏁 V5.8 cycle complete")
 
 
 if __name__ == "__main__":
