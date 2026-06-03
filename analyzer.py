@@ -15,8 +15,8 @@ def fetch_pitcher_stats(player_id):
     except:
         return {"ERA":"-", "WHIP":"-"}
 
-def analyze_games(schedule_data, odds_data=None):
-    """Analiza todos los juegos del día y devuelve reporte completo."""
+def analyze_games(schedule_data):
+    """Analiza todos los juegos del día y devuelve reporte completo para Telegram."""
     report = []
     seen_games = set()
 
@@ -65,13 +65,13 @@ def analyze_games(schedule_data, odds_data=None):
                 except:
                     total = 8.5
 
-                # Determinar pick según confianza y ERA
+                # Determinar pick
                 pick = away if confidence >= 55 else home
 
                 # Hándicap automático
                 handicap = -1.5 if pick==away else 1.5
 
-                # Nivel según confianza
+                # Nivel
                 if confidence >= 70:
                     level = "🔥 ELITE"
                 elif confidence >= 60:
@@ -84,8 +84,9 @@ def analyze_games(schedule_data, odds_data=None):
                 # Jugada recomendada
                 recommended = pick if confidence >= 55 else "NO JUGAR"
 
-                # Total Alta/Baja según pick
+                # Total Alta/Baja y porcentaje
                 total_label = "Alta" if pick==away else "Baja"
+                total_percent = round(confidence, 2)
 
                 report.append({
                     "home_team": home,
@@ -93,14 +94,19 @@ def analyze_games(schedule_data, odds_data=None):
                     "home_pitcher": home_pitcher,
                     "away_pitcher": away_pitcher,
                     "pick": pick,
-                    "confidence": round(confidence, 2),
+                    "confidence": round(confidence,2),
                     "total": total,
                     "total_label": total_label,
+                    "total_percent": total_percent,
                     "handicap": handicap,
+                    "handicap_percent": total_percent,
                     "level": level,
                     "recommended": recommended
                 })
             except:
                 continue
 
-    return report
+    # Ordenar Top Picks
+    top_picks = sorted(report, key=lambda x: x["confidence"], reverse=True)[:5]
+
+    return report, top_picks
