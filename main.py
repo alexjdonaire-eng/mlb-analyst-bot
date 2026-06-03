@@ -35,12 +35,13 @@ def main():
         print("❌ No report generated")
         return
 
+    # ordenar por confianza
     report = sorted(report, key=lambda x: x["probability"], reverse=True)
 
     top5 = report[:5]
 
     # =========================
-    # ENVIAR PICKS INDIVIDUALES
+    # ENVIAR CADA JUEGO
     # =========================
     for r in report:
 
@@ -51,6 +52,7 @@ def main():
             f"📈 Edge: {r['edge']}%\n"
             f"📊 Steam: {r['steam']}\n"
             f"🏷 Nivel: {r['level']}\n"
+            "━━━━━━━━━━━━━━"
         )
 
         send(message)
