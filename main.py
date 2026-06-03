@@ -3,9 +3,6 @@ import requests
 from analyzer import run_analyzer
 import time
 
-# =========================
-# TELEGRAM CONFIG
-# =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -19,9 +16,6 @@ def send_telegram(msg):
     except Exception as e:
         print(f"❌ Telegram error: {e}")
 
-# =========================
-# RUN ANALYZER & SEND
-# =========================
 if __name__ == "__main__":
     games = run_analyzer()
     for g in games:
@@ -37,4 +31,4 @@ if __name__ == "__main__":
 🏷 Nivel: {g['level']}
 ━━━━━━━━━━━━━━"""
         send_telegram(msg)
-        time.sleep(1)  # para no saturar Telegram
+        time.sleep(1)
