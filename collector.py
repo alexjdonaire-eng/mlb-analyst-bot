@@ -1,13 +1,7 @@
 import requests
 
-# =========================
-# CONFIG API (PUEDES CAMBIARLA)
-# =========================
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 
-# =========================
-# FUNCIÓN: stats pitcher
-# =========================
 def fetch_pitcher_stats(player_id):
     if not player_id:
         return {"ERA": "-", "WHIP": "-"}
@@ -23,9 +17,6 @@ def fetch_pitcher_stats(player_id):
     except:
         return {"ERA": "-", "WHIP": "-"}
 
-# =========================
-# FUNCIÓN: obtener datos MLB
-# =========================
 def fetch_mlb_data():
     try:
         res = requests.get(MLB_SCHEDULE_URL, timeout=20)
@@ -63,7 +54,7 @@ def fetch_mlb_data():
                     "away_team": away,
                     "home_pitcher": home_pitcher,
                     "away_pitcher": away_pitcher,
-                    "movement": 0,   # placeholder (conectar odds API después)
+                    "movement": 0,
                     "steam": "⚪ NEUTRAL"
                 })
 
@@ -72,11 +63,8 @@ def fetch_mlb_data():
 
     return games
 
-# =========================
-# MAIN CALL
-# =========================
 def run():
-    print("📡 COLLECTOR V5.11 START")
+    print("📡 COLLECTOR V5.12 START")
     games = fetch_mlb_data()
     print(f"📊 Games loaded: {len(games)}")
     return games
