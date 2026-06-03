@@ -20,7 +20,7 @@ def save_results(data):
     with open(FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def save_pick(game, pick):
+def save_pick(game, pick_type, pick_value):
 
     data = load_results()
 
@@ -31,7 +31,8 @@ def save_pick(game, pick):
 
     data[today].append({
         "game": game,
-        "pick": pick,
+        "pick_type": pick_type,
+        "pick_value": pick_value,
         "result": "PENDIENTE"
     })
 
