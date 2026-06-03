@@ -1,6 +1,5 @@
 import os
 import requests
-
 from analyzer import run as run_analyzer
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -9,15 +8,13 @@ TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
 def send_telegram(msg):
     try:
-        res = requests.post(TELEGRAM_URL, data={
+        requests.post(TELEGRAM_URL, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": msg,
             "parse_mode": "Markdown"
         })
-        if res.status_code != 200:
-            print(f"❌ Error enviando mensaje: {res.text}")
     except Exception as e:
-        print(f"❌ Excepción Telegram: {e}")
+        print(f"❌ Error Telegram: {e}")
 
 def format_game(game):
     hp = game["home_pitcher"]
@@ -30,15 +27,16 @@ def format_game(game):
 {game['away_team']}: {ap['name']} (ERA: {ap['ERA']}, WHIP: {ap['WHIP']})
 
 🎯 *Ganador sugerido:* {game['pick']}
+⚾ *Total carreras:* {game['total']}
+⚾ *Hándicap:* {game['spread']}
 📊 *Confianza:* {game['confidence']}%
-📈 *Edge:* {game['edge']}%
 🏷 *Nivel:* {game['level']}
 💎 *Jugada recomendada:* {game['pick']}
 """
     return msg
 
 if __name__ == "__main__":
-    print("📡 MAIN V5.15 START")
+    print("📡 MAIN V5.16 START")
     games = run_analyzer()
     for g in games:
         msg = format_game(g)
