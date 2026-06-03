@@ -1,8 +1,8 @@
-print("🔥 ANALYZER V4.5")
+print("🔥 ANALYZER V5.2")
 
 def run(games):
 
-    print("🏦 SHARP MONEY V4.5 INSTITUTIONAL")
+    print("🏦 SHARP MONEY V5.2 INSTITUTIONAL")
 
     if not games:
         print("❌ No games found")
@@ -39,11 +39,18 @@ def run(games):
 
         edge = prob - 50
 
-        # FILTRO DE RUIDO
+        steam = game.get("movement", 0)
+
+        steam_signal = "⚪ NEUTRAL"
+
+        if steam > 3:
+            steam_signal = "🔥 SHARP MONEY IN"
+        elif steam < -3:
+            steam_signal = "❄️ REVERSE LINE"
+
         if prob < 57:
             continue
 
-        # NIVEL
         if prob >= 62:
             level = "🔥 ELITE"
         elif prob >= 59:
@@ -51,12 +58,12 @@ def run(games):
         else:
             level = "⚠️ LEAN"
 
-        # LOG EN CONSOLA
         print()
         print(f"⚾ {away} vs {home}")
         print(f"🎯 Pick: {pick}")
         print(f"📊 Confianza: {round(prob,2)}%")
         print(f"📈 Edge: {round(edge,2)}%")
+        print(f"📊 Steam: {steam_signal}")
         print(f"🏷 Nivel: {level}")
         print("----------------")
 
@@ -65,7 +72,8 @@ def run(games):
             "pick": pick,
             "probability": round(prob,2),
             "edge": round(edge,2),
-            "level": level
+            "level": level,
+            "steam": steam_signal
         })
 
     return report
