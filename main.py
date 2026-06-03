@@ -2,12 +2,12 @@ import collector
 import analyzer
 
 def main():
-    print("🚀 SHARP MONEY BOT V3 START")
+    print("🏦 SHARP MONEY V4 INSTITUTIONAL START")
 
     games = collector.run()
     report = analyzer.run(games)
 
-    print("🏁 CYCLE FINISHED")
+    print("🏁 CYCLE COMPLETE")
 
 if __name__ == "__main__":
     main()
