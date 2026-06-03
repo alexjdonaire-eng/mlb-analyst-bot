@@ -26,11 +26,10 @@ def send(msg):
 
 
 # =========================
-# LOAD HISTORY
+# HISTORY
 # =========================
 def load_history():
     rows = []
-
     try:
         with open(HISTORY_FILE, "r") as f:
             for line in f:
@@ -40,19 +39,17 @@ def load_history():
                     continue
     except:
         pass
-
     return rows
 
 
 # =========================
-# LATEST GAME SNAPSHOTS
+# LATEST SNAPSHOT PER GAME
 # =========================
 def latest_games(history):
     games = {}
 
     for row in reversed(history):
         key = f"{row.get('away_team')}_{row.get('home_team')}"
-
         if key not in games:
             games[key] = row
 
@@ -60,7 +57,7 @@ def latest_games(history):
 
 
 # =========================
-# WINNER PICK LOGIC
+# PICK LOGIC
 # =========================
 def pick_winner(game):
     odds = game.get("odds", {})
@@ -75,7 +72,7 @@ def pick_winner(game):
 
 
 # =========================
-# HASH CONTROL (ANTI-SPAM)
+# HASH ANTI-SPAM
 # =========================
 def make_hash(text):
     return hashlib.md5(text.encode()).hexdigest()
@@ -95,7 +92,7 @@ def mark_sent(report):
 
 
 # =========================
-# MAIN ANALYZER
+# MAIN
 # =========================
 def main():
 
@@ -105,7 +102,7 @@ def main():
     picks = []
 
     # =========================
-    # BUILD PICKS
+    # BUILD PICKS (SIN LIMITE)
     # =========================
     for game in games:
 
@@ -115,7 +112,6 @@ def main():
 
         winner, prob = result
 
-        # filtro base (evita ruido)
         if prob < 58:
             continue
 
@@ -128,14 +124,11 @@ def main():
             "edge": edge
         })
 
-    # ordenar por edge (calidad real)
+    # ordenar por calidad
     picks = sorted(picks, key=lambda x: x["edge"], reverse=True)
 
-    # limitar parley (máx 5)
-    picks = picks[:5]
-
     # =========================
-    # BUILD REPORT
+    # REPORT
     # =========================
     report = "🏦 MLB PRO PARLEY CLEAN\n\n"
 
@@ -148,21 +141,19 @@ def main():
             f"----------------------\n"
         )
 
+    # parley dinámico (mínimo 3 picks si existen)
     if len(picks) >= 3:
         report += "\n🔥 PARLEY DEL DÍA\n\n"
         for p in picks[:4]:
             report += f"✔ {p['pick']}\n"
 
     # =========================
-    # ANTI-SPAM CHECK
+    # ANTI-SPAM
     # =========================
     if was_sent(report):
         print("⚠️ DUPLICATE REPORT - SKIPPED")
         return
 
-    # =========================
-    # SEND
-    # =========================
     send(report)
     mark_sent(report)
 
