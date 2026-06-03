@@ -1,7 +1,6 @@
 from collector import run as get_games
 
 def run_analyzer():
-    print("🏦 ANALYZER V5.14 START")
     games = get_games()
     report = []
 
@@ -9,25 +8,21 @@ def run_analyzer():
         try:
             home = g.get("home_team")
             away = g.get("away_team")
-
             hp = g.get("home_pitcher", {"name":"TBD","ERA":"-","WHIP":"-"})
             ap = g.get("away_pitcher", {"name":"TBD","ERA":"-","WHIP":"-"})
 
             def safe_float(x):
-                try:
-                    return float(x)
-                except:
-                    return 4.50
+                try: return float(x)
+                except: return 4.50
 
             home_era = safe_float(hp["ERA"])
             away_era = safe_float(ap["ERA"])
             home_whip = safe_float(hp["WHIP"])
             away_whip = safe_float(ap["WHIP"])
 
-            movement = g.get("movement", 0)
-            steam = g.get("steam", "⚪ NEUTRAL")
+            movement = g.get("movement",0)
+            steam = g.get("steam","⚪ NEUTRAL")
 
-            # Modelo V5.14
             pitcher_diff = (away_era + away_whip) - (home_era + home_whip)
             market_factor = -movement * 0.35
             score = 50 + (pitcher_diff*6.5) + market_factor
@@ -56,8 +51,10 @@ def run_analyzer():
                 "home_pitcher": hp,
                 "away_pitcher": ap
             })
-        except Exception as e:
-            print(f"❌ Game error: {e}")
+        except:
+            continue
 
-    print(f"📊 Analyzer processed: {len(report)} games")
-    return report
+    # Ordenar Top 5 Picks
+    top5 = sorted(report, key=lambda x: x["confidence"], reverse=True)[:5]
+
+    return report, top5
