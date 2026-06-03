@@ -3,7 +3,7 @@ import os
 
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h"
+ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h,totals,spreads"
 
 def fetch_pitcher_stats(player_id):
     if not player_id:
@@ -16,22 +16,37 @@ def fetch_pitcher_stats(player_id):
     except:
         return {"ERA":"-", "WHIP":"-"}
 
-def fetch_market_moves():
+def fetch_market_data():
     try:
         res = requests.get(ODDS_API_URL, timeout=15)
         data = res.json()
-        moves = {}
+        markets = {}
         for g in data:
             try:
                 home = g["home_team"]
                 away = g["away_team"]
-                h_odds = g["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
-                a_odds = g["bookmakers"][0]["markets"][0]["outcomes"][1]["price"]
-                move = a_odds - h_odds
-                moves[f"{home}_vs_{away}"] = move
+                mkt = g["bookmakers"][0]["markets"]
+                # ML
+                h_ml = a_ml = 0
+                total = total_conf = 0
+                spread = ""
+                for m in mkt:
+                    if m["key"] == "h2h":
+                        h_ml = m["outcomes"][0]["price"]
+                        a_ml = m["outcomes"][1]["price"]
+                    elif m["key"] == "totals":
+                        total = m["outcomes"][0]["point"]  # ejemplo Over/Under
+                        total_conf = 60  # placeholder, podemos hacer cálculo más avanzado
+                    elif m["key"] == "spreads":
+                        spread = m["outcomes"][0]["point"]
+                markets[f"{home}_vs_{away}"] = {
+                    "h_ml": h_ml, "a_ml": a_ml,
+                    "total": total,
+                    "spread": spread
+                }
             except:
                 continue
-        return moves
+        return markets
     except:
         return {}
 
@@ -42,7 +57,7 @@ def fetch_mlb_games():
     except:
         return []
 
-    moves = fetch_market_moves()
+    markets = fetch_market_data()
     games = []
 
     for day in data.get("dates", []):
@@ -61,29 +76,37 @@ def fetch_mlb_games():
                 away_pitcher.update(fetch_pitcher_stats(ap_data.get("id")))
 
                 key = f"{home}_vs_{away}"
-                market_move = moves.get(key, 0)
+                mkt = markets.get(key, {})
+                h_ml = mkt.get("h_ml",0)
+                a_ml = mkt.get("a_ml",0)
+                total = mkt.get("total","-")
+                spread = mkt.get("spread","-")
 
-                if market_move >= 5:
-                    steam = "🔥 SHARP MONEY IN"
-                elif market_move <= -5:
-                    steam = "⚪ PUBLIC HEAVY"
-                else:
-                    steam = "⚪ NEUTRAL"
+                # Score simple
+                score = (float(home_pitcher.get("ERA",4.5)) + float(home_pitcher.get("WHIP",1.5))) - \
+                        (float(away_pitcher.get("ERA",4.5)) + float(away_pitcher.get("WHIP",1.5)))
+
+                pick = home if score<0 else away
+                confidence = min(max(abs(score)*12 + 50,45),75)
+                level = "🔥 ELITE" if confidence>=64 else "✅ FUERTE" if confidence>=58 else "⚠️ LEAN"
 
                 games.append({
                     "home_team": home,
                     "away_team": away,
                     "home_pitcher": home_pitcher,
                     "away_pitcher": away_pitcher,
-                    "movement": market_move,
-                    "steam": steam
+                    "pick": pick,
+                    "confidence": round(confidence,2),
+                    "level": level,
+                    "total": total,
+                    "spread": spread
                 })
             except:
                 continue
     return games
 
 def run():
-    print("📡 COLLECTOR V5.15 START")
+    print("📡 COLLECTOR V5.16 START")
     games = fetch_mlb_games()
-    print(f"📊 Games loaded: {len(games)}")
+    print(f"📊 Juegos cargados: {len(games)}")
     return games
