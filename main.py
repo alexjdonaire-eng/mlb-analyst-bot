@@ -1,31 +1,26 @@
 import time
-from collector import main as collector_main
-from analyzer import main as analyzer_main
+import os
 
-print("🚀 PRO BOT CYCLE START")
+from collector import main as run_collector
+from analyzer import main as run_analyzer
 
-start = time.time()
+print("🔥 BOT PRO V2 STARTED")
 
-# =========================
-# COLLECTOR
-# =========================
-try:
-    print("📡 Running collector...")
-    collector_main()
-    print("✅ Collector done")
-except Exception as e:
-    print("❌ Collector error:", e)
+while True:
+    try:
+        print("\n====================")
+        print("🚀 NEW CYCLE")
+        print("====================")
 
-# =========================
-# ANALYZER
-# =========================
-try:
-    print("🧠 Running analyzer...")
-    analyzer_main()
-    print("✅ Analyzer done")
-except Exception as e:
-    print("❌ Analyzer error:", e)
+        print("📡 Collector...")
+        run_collector()
 
-end = time.time()
+        print("🧠 Analyzer...")
+        run_analyzer()
 
-print(f"🏁 CYCLE FINISHED in {round(end - start, 2)}s")
+        print("⏳ Sleeping 60s...")
+        time.sleep(60)
+
+    except Exception as e:
+        print("❌ ERROR:", e)
+        time.sleep(10)
