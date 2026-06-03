@@ -1,184 +1,146 @@
 import os
-import time
 import json
 import requests
-from datetime import datetime, timezone
 
-ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+HISTORY_FILE = "market_history.jsonl"
 
-API_KEY = os.getenv("ODDS_API_KEY")
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-LEDGER_FILE = "trades.jsonl"
-
 
 # =========================
 # TELEGRAM
 # =========================
 
 def send(msg):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg},
-            timeout=15
-        )
-    except:
-        pass
 
-
-# =========================
-# DATA FETCH
-# =========================
-
-def fetch_odds():
-    r = requests.get(
-        ODDS_URL,
-        params={
-            "apiKey": API_KEY,
-            "regions": "us",
-            "markets": "h2h",
-            "oddsFormat": "decimal"
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={
+            "chat_id": CHAT_ID,
+            "text": msg
         },
         timeout=20
     )
 
-    if r.status_code != 200:
-        return []
-
-    return r.json()
-
-
 # =========================
-# FEATURE ENGINE
+# LOAD HISTORY
 # =========================
 
-def extract_edge(game):
+def load_history():
 
-    if not game.get("bookmakers"):
-        return None
+    rows = []
 
-    book = game["bookmakers"][0]
-    outcomes = book["markets"][0]["outcomes"]
+    try:
 
-    odds = {o["name"]: o["price"] for o in outcomes}
+        with open(HISTORY_FILE, "r") as f:
+
+            for line in f:
+
+                try:
+                    rows.append(json.loads(line))
+                except:
+                    pass
+
+    except:
+        pass
+
+    return rows
+
+# =========================
+# LATEST SNAPSHOT PER GAME
+# =========================
+
+def latest_games(history):
+
+    games = {}
+
+    for row in reversed(history):
+
+        away = row.get("away_team")
+        home = row.get("home_team")
+
+        if not away or not home:
+            continue
+
+        key = f"{away}_{home}"
+
+        if key not in games:
+            games[key] = row
+
+    return list(games.values())
+
+# =========================
+# PICK WINNER
+# =========================
+
+def pick_winner(game):
+
+    odds = game.get("odds", {})
 
     if len(odds) < 2:
         return None
 
-    favorite = min(odds, key=odds.get)
-    price = odds[favorite]
+    winner = min(odds, key=odds.get)
 
-    implied = 1 / price
+    prob = round((1 / odds[winner]) * 100, 1)
 
-    # pseudo model probability (baseline inefficiency model)
-    model_prob = implied + 0.03  # small edge assumption
-
-    edge = model_prob - implied
-
-    return favorite, price, edge, odds
-
+    return winner, prob
 
 # =========================
-# STAKING (KELLY CONSERVATIVE)
+# MAIN
 # =========================
 
-def kelly(edge, odds, bankroll):
+def main():
 
-    if odds <= 1:
-        return 0
+    history = load_history()
 
-    b = odds - 1
-    p = min(max(edge + (1 / odds), 0.05), 0.90)
-    q = 1 - p
+    games = latest_games(history)
 
-    k = (b * p - q) / b
+    report = "🏦 MLB PREDICCIONES\n\n"
 
-    return max(k * 0.25, 0) * bankroll  # quarter Kelly
+    total = 0
 
+    for game in games:
 
-# =========================
-# EXECUTION (PAPER TRADING)
-# =========================
+        away = game.get("away_team")
+        home = game.get("home_team")
 
-def execute_trade(game, bankroll):
+        result = pick_winner(game)
 
-    res = extract_edge(game)
+        if not result:
+            continue
 
-    if not res:
-        return bankroll, None
+        winner, prob = result
 
-    team, odds, edge, all_odds = res
+        if prob >= 65:
+            confidence = "🔥 ALTA"
+        elif prob >= 58:
+            confidence = "✅ MEDIA"
+        else:
+            confidence = "⚠️ BAJA"
 
-    if edge < 0.02:
-        return bankroll, None
+        report += (
+            f"⚾ {away} vs {home}\n\n"
+            f"🎯 Ganador: {winner} ({prob}%)\n"
+            f"📊 Confianza: {confidence}\n"
+            f"⭐ Mejor jugada: {winner}\n\n"
+            f"────────────────────\n\n"
+        )
 
-    stake = kelly(edge, odds, bankroll)
+        total += 1
 
-    if stake < 5:
-        return bankroll, None
+    if total == 0:
 
-    # simulate outcome (NO REAL RESULTS YET)
-    outcome = 1.12 if edge > 0.03 else 0.95
+        report = (
+            "🏦 MLB PREDICCIONES\n\n"
+            "⚠️ No hay suficientes datos todavía.\n"
+            "Espera algunos snapshots más."
+        )
 
-    pnl = stake * (outcome - 1)
+    send(report)
 
-    bankroll += pnl
-
-    trade = {
-        "time": datetime.now(timezone.utc).isoformat(),
-        "team": team,
-        "odds": odds,
-        "edge": edge,
-        "stake": stake,
-        "pnl": pnl,
-        "bankroll": bankroll
-    }
-
-    with open(LEDGER_FILE, "a") as f:
-        f.write(json.dumps(trade) + "\n")
-
-    return bankroll, trade
-
-
-# =========================
-# MAIN LOOP (LIVE ENGINE)
-# =========================
-
-def run():
-
-    bankroll = 1000
-
-    send("🚀 LIVE TRADING DESK STARTED")
-
-    while True:
-
-        games = fetch_odds()
-
-        trades = 0
-
-        for g in games:
-
-            bankroll, trade = execute_trade(g, bankroll)
-
-            if trade:
-                trades += 1
-
-                send(
-                    f"⚾ TRADE EXECUTED\n\n"
-                    f"{trade['team']}\n"
-                    f"Odds: {trade['odds']}\n"
-                    f"Edge: {round(trade['edge']*100,2)}%\n"
-                    f"Stake: ${round(trade['stake'],2)}\n"
-                    f"PnL: ${round(trade['pnl'],2)}\n"
-                    f"Bankroll: ${round(bankroll,2)}"
-                )
-
-        print(f"Cycle done | trades: {trades} | bankroll: {bankroll}")
-
-        time.sleep(300)  # every 5 minutes
-
+    print("TOTAL GAMES:", len(games))
+    print("✅ ANALYZER SENT")
 
 if __name__ == "__main__":
-    run()
+    main()
