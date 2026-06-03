@@ -1,13 +1,10 @@
-def run_analyzer():
-    print("🏦 SHARP MONEY V5.13 ANALYZER START")
-    try:
-        from collector import run as get_games
-        games = get_games()
-    except Exception as e:
-        print(f"❌ Collector error: {e}")
-        return []
+from collector import run as get_games
 
+def run_analyzer():
+    print("🏦 ANALYZER V5.14 START")
+    games = get_games()
     report = []
+
     for g in games:
         try:
             home = g.get("home_team")
@@ -28,13 +25,16 @@ def run_analyzer():
             away_whip = safe_float(ap["WHIP"])
 
             movement = g.get("movement", 0)
+            steam = g.get("steam", "⚪ NEUTRAL")
+
+            # Modelo V5.14
             pitcher_diff = (away_era + away_whip) - (home_era + home_whip)
             market_factor = -movement * 0.35
-            score = 50 + (pitcher_diff * 6.5) + market_factor
+            score = 50 + (pitcher_diff*6.5) + market_factor
 
             pick = home if score >= 50 else away
-            confidence = max(45, min(abs(score), 75))
-            edge = abs(score - 50)
+            confidence = max(45, min(score,75))
+            edge = abs(score-50)
 
             if confidence >= 64:
                 level = "🔥 ELITE"
@@ -49,8 +49,8 @@ def run_analyzer():
                 "pick": pick,
                 "confidence": round(confidence,2),
                 "edge": round(edge,2),
-                "steam": g.get("steam","⚪ NEUTRAL"),
-                "market_move": movement,
+                "steam": steam,
+                "market_move": round(movement,2),
                 "score": round(score,2),
                 "level": level,
                 "home_pitcher": hp,
@@ -59,5 +59,5 @@ def run_analyzer():
         except Exception as e:
             print(f"❌ Game error: {e}")
 
-    print(f"📊 Games analyzed: {len(report)}")
+    print(f"📊 Analyzer processed: {len(report)} games")
     return report
