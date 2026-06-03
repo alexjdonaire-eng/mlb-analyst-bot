@@ -1,6 +1,7 @@
 import os
 import requests
 from analyzer import analyze_games, fetch_mlb_games
+from tracker import save_pick, daily_report
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -43,16 +44,32 @@ def main():
         send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
         return
 
-    # --- NUEVO: adaptar a la tupla del analyzer ---
+    # Analizar juegos con Odds API
     analyzed_games, top_message = analyze_games(games)
 
-    # Enviar cada juego
+    # Enviar cada juego a Telegram
     for g in analyzed_games:
         msg = format_game(g)
         send_telegram_message(msg)
 
-    # Enviar TOP 5 generado por analyzer
+    # Guardar el TOP 5 en el tracker
+    top5 = sorted(
+        analyzed_games,
+        key=lambda x: x["confidence"],
+        reverse=True
+    )[:5]
+
+    for pick in top5:
+        save_pick(
+            pick["top_pick_game"],
+            f"{pick['top_pick_type']} {pick['top_pick_value']}"
+        )
+
+    # Enviar TOP 5 a Telegram
     send_telegram_message(top_message)
+
+    # Enviar resumen diario (opcional, si se ejecuta al final del día)
+    # send_telegram_message(daily_report())
 
 if __name__ == "__main__":
     main()
