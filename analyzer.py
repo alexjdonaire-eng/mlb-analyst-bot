@@ -1,10 +1,15 @@
 import os
 import requests
+import math
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-MIN_SCORE = 11.0
+# 💰 BANKROLL SIMULADO (puedes cambiarlo)
+BANKROLL = 1000.0
+
+# 🎯 control de riesgo (conservador hedge fund)
+RISK_CAP = 0.025  # 2.5% max por pick
 
 
 def send(msg):
@@ -19,105 +24,116 @@ def implied_prob(odds):
     return (1 / odds) * 100
 
 
-def normalize_two(a, b):
+def normalize(a, b):
     total = a + b
     return (a / total) * 100, (b / total) * 100
 
 
-# 🧠 pseudo volatility (proxy sin histórico real de lines movement)
-def volatility_proxy(p1, p2):
-    return abs(p1 - p2) / (p1 + p2)
+# 🧠 Kelly simplificado (clave V6)
+def kelly_fraction(prob, odds):
+    b = odds - 1
+    q = 1 - prob
+    return max((b * prob - q) / b, 0)
+
+
+# 🧠 risk score (evita overexposure)
+def risk_adjustment(edge, confidence):
+    return edge * confidence
 
 
 def run(games):
 
-    print("🏦 SHARP MONEY V5 HEDGE FUND START")
+    print("🏦 SHARP MONEY V6 HEDGE FUND PORTFOLIO START")
 
-    report = "🏦 SHARP MONEY V5 — HEDGE FUND MODEL\n\n"
-
-    picks = 0
+    candidates = []
 
     for g in games:
 
         odds = g.get("odds", {})
-
         if len(odds) < 2:
             continue
 
         teams = list(odds.keys())
 
-        # 📊 implied probability
+        # 📊 implied probabilities
         probs = {t: implied_prob(o) for t, o in odds.items()}
 
         # 🔧 normalize market
-        p1, p2 = normalize_two(probs[teams[0]], probs[teams[1]])
-
+        p1, p2 = normalize(probs[teams[0]], probs[teams[1]])
         probs[teams[0]] = p1
         probs[teams[1]] = p2
 
         fav = max(probs, key=probs.get)
         dog = min(probs, key=probs.get)
 
-        fav_p = probs[fav]
-        dog_p = probs[dog]
+        fav_p = probs[fav] / 100
+        dog_p = probs[dog] / 100
+
+        fav_odds = odds[fav]
 
         # 📉 EDGE
-        edge = abs(fav_p - dog_p)
+        edge = abs(probs[fav] - probs[dog])
 
-        # 🧠 MARKET PRESSURE (dominancia del favorito)
-        pressure = fav_p / (fav_p + dog_p)
+        # 🧠 confidence model
+        confidence = edge / 20  # normalized rough proxy
 
-        # 🧠 VOLATILITY PROXY (clave V5)
-        vol = volatility_proxy(fav_p, dog_p)
+        # 🧠 kelly sizing
+        kelly = kelly_fraction(fav_p, fav_odds)
 
-        # 🧠 CONSENSUS STABILITY SCORE
-        stability = 1 - vol
+        # 🧠 risk-adjusted score
+        score = risk_adjustment(edge, confidence)
 
-        # 🧠 "CLOSING LINE PROXY"
-        # simulamos que el mercado eficiente empuja hacia equilibrio
-        clv_proxy = edge * stability * (1 + pressure)
+        candidates.append({
+            "game": g,
+            "pick": fav,
+            "edge": edge,
+            "confidence": confidence,
+            "kelly": kelly,
+            "score": score,
+            "odds": fav_odds
+        })
 
-        # 🧠 FINAL SHARP SCORE V5
-        score = (
-            edge * 0.35 +
-            clv_proxy * 0.45 +
-            stability * 10 * 0.2
-        )
+    # 🧠 sort by institutional priority
+    candidates.sort(key=lambda x: x["score"], reverse=True)
 
-        pick = fav
+    # 🔥 portfolio selection (TOP N ONLY)
+    top = candidates[:5]
 
-        if score < MIN_SCORE:
-            continue
+    if not top:
+        send("⚠️ No institutional edges detected (V6 portfolio empty)")
+        return
 
-        # 🧠 classification
-        if score > 20:
-            tag = "🔥 HEDGE FUND SHARP"
-        elif score > 16:
-            tag = "⚡ INSTITUTIONAL EDGE"
-        elif score > 13:
-            tag = "📊 SHARP VALUE"
-        else:
-            tag = "📈 WEAK EDGE"
+    report = "🏦 SHARP MONEY V6 — HEDGE FUND PORTFOLIO\n\n"
+    report += f"💰 BANKROLL: ${BANKROLL}\n"
+    report += f"📊 PICKS SELECTED: {len(top)}\n\n"
+
+    total_alloc = 0
+
+    for c in top:
+
+        # 🧠 position sizing (risk capped Kelly)
+        raw_kelly = c["kelly"]
+        stake = BANKROLL * min(raw_kelly, RISK_CAP)
+
+        total_alloc += stake
+
+        g = c["game"]
 
         report += (
-            f"⚾ {g.get('away')} vs {g.get('home')}\n"
-            f"🎯 Pick: {pick}\n"
-            f"📊 Score V5: {score:.2f}\n"
-            f"📉 Edge: {edge:.2f}\n"
-            f"🧠 Pressure: {pressure:.2f}\n"
-            f"📊 Stability: {stability:.2f}\n"
-            f"📈 CLV Proxy: {clv_proxy:.2f}\n"
-            f"🏷 Status: {tag}\n\n"
+            f"⚾ {g['away']} vs {g['home']}\n"
+            f"🎯 Pick: {c['pick']}\n"
+            f"📊 Edge: {c['edge']:.2f}\n"
+            f"🧠 Confidence: {c['confidence']:.2f}\n"
+            f"📈 Kelly: {c['kelly']:.4f}\n"
+            f"💰 Stake: ${stake:.2f}\n"
+            f"🏷 Odds: {c['odds']}\n\n"
             "----------------------\n"
         )
 
-        picks += 1
-
-    if picks == 0:
-        report += "⚠️ No hedge fund edge detected (market efficient zone)"
+    # 🧠 capital check
+    report += f"\n💼 TOTAL ALLOCATED: ${total_alloc:.2f}"
+    report += f"\n🧯 RISK UTILIZATION: {total_alloc / BANKROLL:.2%}"
 
     send(report)
 
-    print(f"✅ V5 PICKS SENT: {picks}")
-
-    return report
+    print(f"✅ V6 PORTFOLIO SENT | PICKS: {len(top)}")
