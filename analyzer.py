@@ -94,4 +94,4 @@ def run(games):
             "steam": steam_signal
         })
 
-    return report
+    return repor
