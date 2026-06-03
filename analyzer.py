@@ -1,5 +1,5 @@
 def run_analyzer():
-    print("🏦 SHARP MONEY V5.11 ANALYZER START")
+    print("🏦 SHARP MONEY V5.12 ANALYZER START")
     try:
         from collector import run as get_games
         games = get_games()
@@ -8,7 +8,6 @@ def run_analyzer():
         return []
 
     report = []
-
     for g in games:
         try:
             home = g.get("home_team")
@@ -60,5 +59,5 @@ def run_analyzer():
         except Exception as e:
             print(f"❌ Game error: {e}")
 
-    print(f"📊 Games loaded: {len(report)}")
+    print(f"📊 Games analyzed: {len(report)}")
     return report
