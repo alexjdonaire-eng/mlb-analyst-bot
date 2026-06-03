@@ -61,9 +61,10 @@ def main():
 
     for pick in top5:
         save_pick(
-            pick["top_pick_game"],
-            f"{pick['top_pick_type']} {pick['top_pick_value']}"
-        )
+    pick["top_pick_game"],
+    pick["top_pick_type"],
+    pick["top_pick_value"]
+)
 
     # Enviar TOP 5 a Telegram
     send_telegram_message(top_message)
