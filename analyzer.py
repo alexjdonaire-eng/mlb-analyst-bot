@@ -1,5 +1,5 @@
 def run_analyzer():
-    print("🏦 SHARP MONEY V5.12 ANALYZER START")
+    print("🏦 SHARP MONEY V5.13 ANALYZER START")
     try:
         from collector import run as get_games
         games = get_games()
