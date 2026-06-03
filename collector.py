@@ -3,13 +3,16 @@ import os
 
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h,totals,spreads"
+ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals"
 
 def fetch_pitcher_stats(player_id):
     if not player_id:
         return {"ERA":"-", "WHIP":"-"}
     try:
-        res = requests.get(f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching", timeout=15)
+        res = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
+            timeout=15
+        )
         data = res.json()
         stats = data["stats"][0]["splits"][0]["stat"]
         return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
@@ -18,35 +21,32 @@ def fetch_pitcher_stats(player_id):
 
 def fetch_market_data():
     try:
-        res = requests.get(ODDS_API_URL, timeout=15)
+        res = requests.get(ODDS_API_URL, timeout=20)
         data = res.json()
-        markets = {}
+        market = {}
         for g in data:
             try:
                 home = g["home_team"]
                 away = g["away_team"]
-                mkt = g["bookmakers"][0]["markets"]
-                # ML
-                h_ml = a_ml = 0
-                total = total_conf = 0
-                spread = ""
-                for m in mkt:
-                    if m["key"] == "h2h":
-                        h_ml = m["outcomes"][0]["price"]
-                        a_ml = m["outcomes"][1]["price"]
-                    elif m["key"] == "totals":
-                        total = m["outcomes"][0]["point"]  # ejemplo Over/Under
-                        total_conf = 60  # placeholder, podemos hacer cálculo más avanzado
-                    elif m["key"] == "spreads":
-                        spread = m["outcomes"][0]["point"]
-                markets[f"{home}_vs_{away}"] = {
-                    "h_ml": h_ml, "a_ml": a_ml,
-                    "total": total,
-                    "spread": spread
+                odds = g.get("bookmakers",[{}])[0].get("markets",[])
+                h2h = next((m for m in odds if m["key"]=="h2h"), {})
+                totals = next((m for m in odds if m["key"]=="totals"), {})
+                spreads = next((m for m in odds if m["key"]=="spreads"), {})
+
+                h_move = 0
+                if h2h.get("outcomes"):
+                    h_price = h2h["outcomes"][0]["price"]
+                    a_price = h2h["outcomes"][1]["price"]
+                    h_move = a_price - h_price
+
+                market[f"{home}_vs_{away}"] = {
+                    "market_move": h_move,
+                    "totals": totals.get("outcomes", [{"point":"-","price":"-"}]),
+                    "spread": spreads.get("outcomes", [{"point":"-","price":"-"}])
                 }
             except:
                 continue
-        return markets
+        return market
     except:
         return {}
 
@@ -57,17 +57,17 @@ def fetch_mlb_games():
     except:
         return []
 
-    markets = fetch_market_data()
+    market_data = fetch_market_data()
     games = []
 
     for day in data.get("dates", []):
-        for game in day.get("games", []):
+        for g in day.get("games", []):
             try:
-                home = game["teams"]["home"]["team"]["name"]
-                away = game["teams"]["away"]["team"]["name"]
+                home = g["teams"]["home"]["team"]["name"]
+                away = g["teams"]["away"]["team"]["name"]
 
-                hp_data = game["teams"]["home"].get("probablePitcher", {})
-                ap_data = game["teams"]["away"].get("probablePitcher", {})
+                hp_data = g["teams"]["home"].get("probablePitcher", {})
+                ap_data = g["teams"]["away"].get("probablePitcher", {})
 
                 home_pitcher = {"name": hp_data.get("fullName","TBD")}
                 home_pitcher.update(fetch_pitcher_stats(hp_data.get("id")))
@@ -76,37 +76,23 @@ def fetch_mlb_games():
                 away_pitcher.update(fetch_pitcher_stats(ap_data.get("id")))
 
                 key = f"{home}_vs_{away}"
-                mkt = markets.get(key, {})
-                h_ml = mkt.get("h_ml",0)
-                a_ml = mkt.get("a_ml",0)
-                total = mkt.get("total","-")
-                spread = mkt.get("spread","-")
-
-                # Score simple
-                score = (float(home_pitcher.get("ERA",4.5)) + float(home_pitcher.get("WHIP",1.5))) - \
-                        (float(away_pitcher.get("ERA",4.5)) + float(away_pitcher.get("WHIP",1.5)))
-
-                pick = home if score<0 else away
-                confidence = min(max(abs(score)*12 + 50,45),75)
-                level = "🔥 ELITE" if confidence>=64 else "✅ FUERTE" if confidence>=58 else "⚠️ LEAN"
+                market = market_data.get(key, {"market_move":0,"totals":[],"spread":[]})
 
                 games.append({
                     "home_team": home,
                     "away_team": away,
                     "home_pitcher": home_pitcher,
                     "away_pitcher": away_pitcher,
-                    "pick": pick,
-                    "confidence": round(confidence,2),
-                    "level": level,
-                    "total": total,
-                    "spread": spread
+                    "market_move": market["market_move"],
+                    "totals": market["totals"],
+                    "spread": market["spread"]
                 })
             except:
                 continue
     return games
 
 def run():
-    print("📡 COLLECTOR V5.16 START")
+    print("📡 COLLECTOR V5.17 PRO START")
     games = fetch_mlb_games()
-    print(f"📊 Juegos cargados: {len(games)}")
+    print(f"📊 Games loaded: {len(games)}")
     return games
