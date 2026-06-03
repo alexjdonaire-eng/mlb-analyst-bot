@@ -1,55 +1,58 @@
 import requests
 import os
+import json
 
+# =========================
+# CONFIG
+# =========================
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h,spreads"
 
+MARKET_HISTORY_FILE = "market_history.json"
+
+# =========================
+# PITCHER STATS
+# =========================
 def fetch_pitcher_stats(player_id):
     if not player_id:
         return {"ERA": "-", "WHIP": "-"}
-    url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
     try:
-        res = requests.get(url, timeout=15)
+        res = requests.get(f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching", timeout=15)
         data = res.json()
         stats = data["stats"][0]["splits"][0]["stat"]
-        return {
-            "ERA": stats.get("era", "-"),
-            "WHIP": stats.get("whip", "-")
-        }
+        return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
     except:
         return {"ERA": "-", "WHIP": "-"}
 
-def fetch_odds():
-    if not ODDS_API_KEY:
-        print("❌ ODDS_API_KEY not set")
-        return {}
+# =========================
+# MARKET MOVES
+# =========================
+def fetch_market_moves():
     try:
-        res = requests.get(f"{ODDS_API_URL}?regions=us&oddsFormat=decimal", timeout=15, headers={"Authorization": f"Bearer {ODDS_API_KEY}"})
-        data = res.json()
-        odds_map = {}
-        for g in data:
+        res = requests.get(ODDS_API_URL, timeout=15)
+        odds_data = res.json()
+        moves = {}
+        for g in odds_data:
             home = g["home_team"]
             away = g["away_team"]
-            movement = 0
-            steam = "⚪ NEUTRAL"
-            # Detect Sharp Money
-            if "bookmakers" in g and len(g["bookmakers"]) > 0:
-                for b in g["bookmakers"]:
-                    if "markets" in b:
-                        for m in b["markets"]:
-                            if "outcomes" in m:
-                                for o in m["outcomes"]:
-                                    if o.get("pointSpread",0) > 0.1:
-                                        steam = "🔥 SHARP MONEY IN"
-                                        movement = o.get("price",0)
-            odds_map[(home, away)] = {"movement": movement, "steam": steam}
-        return odds_map
+            h_odds = g["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+            a_odds = g["bookmakers"][0]["markets"][0]["outcomes"][1]["price"]
+            move = a_odds - h_odds
+            # Guardamos
+            moves[f"{home}_vs_{away}"] = move
+        # Guardamos snapshot
+        with open(MARKET_HISTORY_FILE,"w") as f:
+            json.dump(moves,f)
+        return moves
     except Exception as e:
-        print(f"❌ Odds fetch error: {e}")
+        print(f"❌ Odds API error: {e}")
         return {}
 
-def fetch_mlb_data():
+# =========================
+# FETCH MLB GAMES
+# =========================
+def fetch_mlb_games():
     try:
         res = requests.get(MLB_SCHEDULE_URL, timeout=20)
         data = res.json()
@@ -58,51 +61,52 @@ def fetch_mlb_data():
         return []
 
     games = []
-    odds_data = fetch_odds()
-    dates = data.get("dates", [])
-    if not dates:
-        return []
+    moves = fetch_market_moves()
 
-    for day in dates:
+    for day in data.get("dates", []):
         for game in day.get("games", []):
             try:
                 home = game["teams"]["home"]["team"]["name"]
                 away = game["teams"]["away"]["team"]["name"]
 
-                home_pitcher_data = game["teams"]["home"].get("probablePitcher", {})
-                away_pitcher_data = game["teams"]["away"].get("probablePitcher", {})
+                # Pitchers
+                hp_data = game["teams"]["home"].get("probablePitcher", {})
+                ap_data = game["teams"]["away"].get("probablePitcher", {})
 
-                home_pitcher = {
-                    "name": home_pitcher_data.get("fullName", "TBD"),
-                    **fetch_pitcher_stats(home_pitcher_data.get("id"))
-                }
+                home_pitcher = {"name": hp_data.get("fullName","TBD")}
+                home_pitcher.update(fetch_pitcher_stats(hp_data.get("id")))
 
-                away_pitcher = {
-                    "name": away_pitcher_data.get("fullName", "TBD"),
-                    **fetch_pitcher_stats(away_pitcher_data.get("id"))
-                }
+                away_pitcher = {"name": ap_data.get("fullName","TBD")}
+                away_pitcher.update(fetch_pitcher_stats(ap_data.get("id")))
 
-                movement, steam = 0, "⚪ NEUTRAL"
-                if (home, away) in odds_data:
-                    movement = odds_data[(home, away)]["movement"]
-                    steam = odds_data[(home, away)]["steam"]
+                # Market move
+                key = f"{home}_vs_{away}"
+                market_move = moves.get(key, 0)
+
+                # Steam detection
+                if market_move >= 5:
+                    steam = "🔥 SHARP MONEY IN"
+                elif market_move <= -5:
+                    steam = "⚪ PUBLIC HEAVY"
+                else:
+                    steam = "⚪ NEUTRAL"
 
                 games.append({
                     "home_team": home,
                     "away_team": away,
                     "home_pitcher": home_pitcher,
                     "away_pitcher": away_pitcher,
-                    "movement": movement,
+                    "movement": market_move,
                     "steam": steam
                 })
 
             except Exception as e:
                 print(f"❌ Game parse error: {e}")
-
+    print(f"📡 COLLECTOR V5.14 - Games loaded: {len(games)}")
     return games
 
+# =========================
+# MAIN CALL
+# =========================
 def run():
-    print("📡 COLLECTOR V5.13 START")
-    games = fetch_mlb_data()
-    print(f"📊 Games loaded: {len(games)}")
-    return games
+    return fetch_mlb_games()
