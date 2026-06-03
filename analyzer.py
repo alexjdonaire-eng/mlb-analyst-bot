@@ -1,17 +1,16 @@
 import os
+import json
 import requests
-import math
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 💰 BANKROLL SIMULADO (puedes cambiarlo)
-BANKROLL = 1000.0
-
-# 🎯 control de riesgo (conservador hedge fund)
-RISK_CAP = 0.025  # 2.5% max por pick
+MEM_FILE = "memory_store.json"
 
 
+# =========================
+# TELEGRAM
+# =========================
 def send(msg):
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -20,120 +19,174 @@ def send(msg):
     )
 
 
-def implied_prob(odds):
-    return (1 / odds) * 100
+# =========================
+# MEMORY
+# =========================
+def load_memory():
+    try:
+        with open(MEM_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {
+            "wins": [],
+            "losses": [],
+            "prob_bins": {
+                "55-60": {"wins": 0, "losses": 0},
+                "60-70": {"wins": 0, "losses": 0}
+            }
+        }
 
 
-def normalize(a, b):
-    total = a + b
-    return (a / total) * 100, (b / total) * 100
+def save_memory(mem):
+    with open(MEM_FILE, "w") as f:
+        json.dump(mem, f)
 
 
-# 🧠 Kelly simplificado (clave V6)
-def kelly_fraction(prob, odds):
-    b = odds - 1
-    q = 1 - prob
-    return max((b * prob - q) / b, 0)
+# =========================
+# STEAM DETECTION (simple but real)
+# =========================
+def detect_steam(prev_probs, current_probs):
+    steam_score = 0
+
+    for team in current_probs:
+        if team in prev_probs:
+            delta = current_probs[team] - prev_probs[team]
+
+            # movimiento fuerte del mercado
+            if delta > 2.0:
+                steam_score += 1
+            elif delta > 4.0:
+                steam_score += 2
+
+    return steam_score
 
 
-# 🧠 risk score (evita overexposure)
-def risk_adjustment(edge, confidence):
-    return edge * confidence
+# =========================
+# PROBABILITY IMPROVER (memory bias)
+# =========================
+def adjust_by_memory(prob, mem):
+    if 55 <= prob < 60:
+        stats = mem["prob_bins"]["55-60"]
+    elif 60 <= prob < 70:
+        stats = mem["prob_bins"]["60-70"]
+    else:
+        return prob
+
+    total = stats["wins"] + stats["losses"]
+
+    if total == 0:
+        return prob
+
+    winrate = stats["wins"] / total
+
+    # ajuste leve
+    return prob * (0.95 + winrate * 0.1)
 
 
-def run(games):
+# =========================
+# PARLAY BUILDER
+# =========================
+def build_parlay(picks):
+    # orden por estabilidad
+    picks = sorted(picks, key=lambda x: x["final_score"], reverse=True)
 
-    print("🏦 SHARP MONEY V6 HEDGE FUND PORTFOLIO START")
+    parlay = []
+    used_teams = set()
 
-    candidates = []
+    for p in picks:
+        game = p["game"]
+
+        # evitar correlación simple (mismo equipo repetido)
+        if game in used_teams:
+            continue
+
+        if p["prob"] < 57:
+            continue
+
+        parlay.append(p)
+        used_teams.add(game)
+
+        if len(parlay) == 4:
+            break
+
+    return parlay
+
+
+# =========================
+# MAIN CORE
+# =========================
+def run(games, prev_snapshot=None):
+
+    mem = load_memory()
+
+    picks = []
 
     for g in games:
 
-        odds = g.get("odds", {})
+        odds = g["odds"]
         if len(odds) < 2:
             continue
 
         teams = list(odds.keys())
 
-        # 📊 implied probabilities
-        probs = {t: implied_prob(o) for t, o in odds.items()}
+        # implied prob
+        p1 = (1 / odds[teams[0]]) * 100
+        p2 = (1 / odds[teams[1]]) * 100
 
-        # 🔧 normalize market
-        p1, p2 = normalize(probs[teams[0]], probs[teams[1]])
-        probs[teams[0]] = p1
-        probs[teams[1]] = p2
+        current_probs = {
+            teams[0]: p1,
+            teams[1]: p2
+        }
 
-        fav = max(probs, key=probs.get)
-        dog = min(probs, key=probs.get)
+        # steam detection
+        steam = 0
+        if prev_snapshot:
+            steam = detect_steam(prev_snapshot.get(g["game_id"], {}), current_probs)
 
-        fav_p = probs[fav] / 100
-        dog_p = probs[dog] / 100
+        fav = max(current_probs, key=current_probs.get)
+        prob = current_probs[fav]
 
-        fav_odds = odds[fav]
+        # memory adjustment
+        prob_adj = adjust_by_memory(prob, mem)
 
-        # 📉 EDGE
-        edge = abs(probs[fav] - probs[dog])
+        final_score = prob_adj + steam * 2
 
-        # 🧠 confidence model
-        confidence = edge / 20  # normalized rough proxy
-
-        # 🧠 kelly sizing
-        kelly = kelly_fraction(fav_p, fav_odds)
-
-        # 🧠 risk-adjusted score
-        score = risk_adjustment(edge, confidence)
-
-        candidates.append({
-            "game": g,
+        picks.append({
+            "game": f"{g['away']} vs {g['home']}",
             "pick": fav,
-            "edge": edge,
-            "confidence": confidence,
-            "kelly": kelly,
-            "score": score,
-            "odds": fav_odds
+            "prob": round(prob_adj, 2),
+            "steam": steam,
+            "final_score": final_score
         })
 
-    # 🧠 sort by institutional priority
-    candidates.sort(key=lambda x: x["score"], reverse=True)
+    # =========================
+    # PARLAY OPTIMIZER
+    # =========================
+    parlay = build_parlay(picks)
 
-    # 🔥 portfolio selection (TOP N ONLY)
-    top = candidates[:5]
+    # =========================
+    # TELEGRAM OUTPUT CLEAN
+    # =========================
+    msg = "🏦 SHARP MONEY V7 — STEAM + MEMORY + PARLAY\n\n"
 
-    if not top:
-        send("⚠️ No institutional edges detected (V6 portfolio empty)")
-        return
-
-    report = "🏦 SHARP MONEY V6 — HEDGE FUND PORTFOLIO\n\n"
-    report += f"💰 BANKROLL: ${BANKROLL}\n"
-    report += f"📊 PICKS SELECTED: {len(top)}\n\n"
-
-    total_alloc = 0
-
-    for c in top:
-
-        # 🧠 position sizing (risk capped Kelly)
-        raw_kelly = c["kelly"]
-        stake = BANKROLL * min(raw_kelly, RISK_CAP)
-
-        total_alloc += stake
-
-        g = c["game"]
-
-        report += (
-            f"⚾ {g['away']} vs {g['home']}\n"
-            f"🎯 Pick: {c['pick']}\n"
-            f"📊 Edge: {c['edge']:.2f}\n"
-            f"🧠 Confidence: {c['confidence']:.2f}\n"
-            f"📈 Kelly: {c['kelly']:.4f}\n"
-            f"💰 Stake: ${stake:.2f}\n"
-            f"🏷 Odds: {c['odds']}\n\n"
-            "----------------------\n"
+    for p in picks:
+        msg += (
+            f"⚾ {p['game']}\n"
+            f"🎯 Pick: {p['pick']}\n"
+            f"📊 Prob: {p['prob']}%\n"
+            f"🔥 Steam: {p['steam']}\n\n"
+            "━━━━━━━━━━━━━━\n"
         )
 
-    # 🧠 capital check
-    report += f"\n💼 TOTAL ALLOCATED: ${total_alloc:.2f}"
-    report += f"\n🧯 RISK UTILIZATION: {total_alloc / BANKROLL:.2%}"
+    msg += "\n🏦 COMBINADA OPTIMIZADA\n\n"
 
-    send(report)
+    for p in parlay:
+        msg += f"• {p['pick']} ({p['game']})\n"
 
-    print(f"✅ V6 PORTFOLIO SENT | PICKS: {len(top)}")
+    msg += "\n⚠️ Ajustada por steam + memoria + estabilidad"
+
+    send(msg)
+
+    print("V7 SENT")
+
+    return picks, parlay
