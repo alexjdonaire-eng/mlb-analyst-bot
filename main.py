@@ -1,50 +1,63 @@
 import os
 import asyncio
-from collector import fetch_mlb_games
 from analyzer import analyze_games
+from collector import fetch_mlb_games
 from telegram import Bot
 
-bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Configuración de Telegram
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+bot = Bot(token=TELEGRAM_TOKEN)
 
-async def send_game(g):
-
-    msg = (
-        f"⚾ {g['away_team']} vs {g['home_team']}\n"
-        f"🎯 {g['pick']}\n"
-        f"📊 {g['confidence']}% | ⚾ {g['total']} | {g['handicap']}\n"
-        f"🏷 {g['level']}"
-    )
-
-    await bot.send_message(CHAT_ID, msg)
-
+# Función para enviar mensajes en bloques
+async def send_game_block(games_block):
+    message = ""
+    for game in games_block:
+        line = (
+            f"⚾ {game['away_team']} vs {game['home_team']}\n"
+            f"🎯 Pick: {game['pick']}\n"
+            f"📊 Confianza: {game['confidence']}% | ⚾ {game['total']} | {game['handicap']}\n"
+            f"🏷 Nivel: {game['level']}\n"
+        )
+        # Resaltar los jugables
+        if game['recommended'] != "NO JUGAR":
+            line = f"🔥 {line}"
+        message += line + "\n"
+    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 async def main():
+    print("🚀 MibotMLB V7.1 PRO START")
+    
+    # Descargar juegos
+    print("📡 Descargando juegos MLB...")
+    games_data = fetch_mlb_games()
+    print(f"📊 Juegos descargados: {len(games_data)}")
 
-    print("🚀 V7 PRO SCANNER START")
+    # Correr analyzer
+    print("🧠 Corriendo analyzer...")
+    games_report = analyze_games(games_data, games_data)
 
-    games = fetch_mlb_games()
-    report = analyze_games(games)
+    # Enviar todos los juegos en bloques de 5
+    block_size = 5
+    for i in range(0, len(games_report), block_size):
+        block = games_report[i:i + block_size]
+        await send_game_block(block)
 
-    print(f"📊 TOTAL GAMES: {len(report)}")
+    # Enviar TOP PICKS
+    top_games = sorted(
+        [g for g in games_report if g['recommended'] != "NO JUGAR"],
+        key=lambda x: x['confidence'],
+        reverse=True
+    )[:5]
+    
+    if top_games:
+        top_message = "🔥 TOP PICKS DEL DÍA\n\n"
+        for i, g in enumerate(top_games, start=1):
+            top_message += f"{i}. {g['pick']} ({g['confidence']}%)\n"
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=top_message)
 
-    # TODOS LOS JUEGOS
-    for g in report:
-        await send_game(g)
-        await asyncio.sleep(0.8)
-
-    # TOP PICKS REAL (solo ranking, no elimina nada)
-    top = report[:5]
-
-    top_msg = "🔥 TOP PICKS DEL DÍA\n\n"
-    for i, g in enumerate(top, 1):
-        top_msg += f"{i}. {g['pick']} ({g['confidence']}%)\n"
-
-    await bot.send_message(chat_id=CHAT_ID, text=top_msg)
-
-    print("✅ V7 PRO COMPLETO")
-
+    print("✅ Mensajes enviados!")
 
 if __name__ == "__main__":
     asyncio.run(main())
