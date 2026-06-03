@@ -1,144 +1,57 @@
-import json
-import os
-import datetime
+def run(games):
 
-MEM_FILE = "fund_memory.json"
+    print("🏦 SHARP MONEY V4 INSTITUTIONAL")
 
-INITIAL_BANKROLL = 1000.0
-MAX_DRAWDOWN = 0.20  # 20% kill switch
+    if not games:
+        print("❌ No games found")
+        return []
 
+    report = []
 
-# =========================
-# LOAD FUND STATE
-# =========================
-def load_fund():
-    try:
-        with open(MEM_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {
-            "bankroll": INITIAL_BANKROLL,
-            "peak": INITIAL_BANKROLL,
-            "pnl": 0,
-            "wins": 0,
-            "losses": 0,
-            "history": []
-        }
+    for game in games:
 
+        home = game["home"]
+        away = game["away"]
+        odds = game["odds"]
 
-def save_fund(fund):
-    with open(MEM_FILE, "w") as f:
-        json.dump(fund, f)
+        home_odds = odds.get(home)
+        away_odds = odds.get(away)
 
+        if not home_odds or not away_odds:
+            continue
 
-# =========================
-# UPDATE RESULT
-# =========================
-def settle_bet(fund, stake, odds, win):
+        home_prob = 1 / home_odds
+        away_prob = 1 / away_odds
 
-    if win:
-        profit = stake * (odds - 1)
-        fund["bankroll"] += profit
-        fund["wins"] += 1
-    else:
-        fund["bankroll"] -= stake
-        fund["losses"] += 1
+        total = home_prob + away_prob
 
-    fund["pnl"] = fund["bankroll"] - INITIAL_BANKROLL
+        home_prob = (home_prob / total) * 100
+        away_prob = (away_prob / total) * 100
 
-    if fund["bankroll"] > fund["peak"]:
-        fund["peak"] = fund["bankroll"]
+        if home_prob > away_prob:
+            pick = home
+            prob = home_prob
+        else:
+            pick = away
+            prob = away_prob
 
-    drawdown = (fund["peak"] - fund["bankroll"]) / fund["peak"]
+        edge = prob - 50
 
-    return drawdown
+        if edge < 5:
+            continue
 
+        print()
+        print(f"⚾ {away} vs {home}")
+        print(f"🎯 Pick: {pick}")
+        print(f"📊 Prob: {round(prob,2)}%")
+        print(f"📈 Edge: {round(edge,2)}%")
+        print("----------------")
 
-# =========================
-# STAKE CONTROL (DYNAMIC)
-# =========================
-def calculate_stake(fund, edge):
+        report.append({
+            "game": f"{away} vs {home}",
+            "pick": pick,
+            "probability": round(prob,2),
+            "edge": round(edge,2)
+        })
 
-    base_risk = 0.02  # 2%
-
-    if edge > 0.15:
-        base_risk = 0.04
-    elif edge < 0.05:
-        base_risk = 0.01
-
-    return fund["bankroll"] * base_risk
-
-
-# =========================
-# KILL SWITCH
-# =========================
-def risk_check(drawdown):
-
-    if drawdown >= MAX_DRAWDOWN:
-        return False
-    return True
-
-
-# =========================
-# ROI METRICS
-# =========================
-def roi(fund):
-    return round((fund["pnl"] / INITIAL_BANKROLL) * 100, 2)
-
-
-# =========================
-# LOG RESULT
-# =========================
-def log_trade(fund, game, pick, stake, odds, result):
-
-    fund["history"].append({
-        "time": str(datetime.datetime.now()),
-        "game": game,
-        "pick": pick,
-        "stake": stake,
-        "odds": odds,
-        "result": result
-    })
-
-
-# =========================
-# MAIN INTERFACE
-# =========================
-def process_pick(game, pick, odds, edge, win=None):
-
-    fund = load_fund()
-
-    stake = calculate_stake(fund, edge)
-
-    drawdown = 0
-
-    if win is not None:
-        drawdown = settle_bet(fund, stake, odds, win)
-        log_trade(fund, game, pick, stake, odds, win)
-
-    save_fund(fund)
-
-    return {
-        "stake": round(stake, 2),
-        "bankroll": round(fund["bankroll"], 2),
-        "roi": roi(fund),
-        "drawdown": round(drawdown * 100, 2),
-        "active": risk_check(drawdown)
-    }
-
-
-# =========================
-# FUND STATUS REPORT
-# =========================
-def fund_status():
-
-    fund = load_fund()
-    dd = (fund["peak"] - fund["bankroll"]) / fund["peak"]
-
-    return {
-        "bankroll": fund["bankroll"],
-        "pnl": fund["pnl"],
-        "roi": roi(fund),
-        "drawdown": round(dd * 100, 2),
-        "active": dd < MAX_DRAWDOWN
-        }
+    return report
