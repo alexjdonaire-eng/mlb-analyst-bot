@@ -22,28 +22,28 @@ async def send_game(g):
 
 async def main():
 
-    print("🚀 V6 CLEAN START")
+    print("🚀 V7 PRO SCANNER START")
 
     games = fetch_mlb_games()
-    picks = analyze_games(games)
+    report = analyze_games(games)
 
-    print(f"📊 VALUE PICKS: {len(picks)}")
+    print(f"📊 TOTAL GAMES: {len(report)}")
 
-    # 🔥 SOLO JUEGOS IMPORTANTES
-    for g in picks:
+    # TODOS LOS JUEGOS
+    for g in report:
         await send_game(g)
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.8)
 
-    # 🔥 SOLO 1 TOP FINAL (NO DUPLICAR MÁS)
-    top = picks[:5]
+    # TOP PICKS REAL (solo ranking, no elimina nada)
+    top = report[:5]
 
-    top_msg = "🔥 TOP 5\n\n"
+    top_msg = "🔥 TOP PICKS DEL DÍA\n\n"
     for i, g in enumerate(top, 1):
         top_msg += f"{i}. {g['pick']} ({g['confidence']}%)\n"
 
-    await bot.send_message(CHAT_ID, top_msg)
+    await bot.send_message(chat_id=CHAT_ID, text=top_msg)
 
-    print("✅ DONE CLEAN OUTPUT")
+    print("✅ V7 PRO COMPLETO")
 
 
 if __name__ == "__main__":
