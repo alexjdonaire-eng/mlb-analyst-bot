@@ -1,8 +1,8 @@
-print("🔥 ANALYZER VERSION V5.6 WITH PITCHERS")
+print("🔥 ANALYZER VERSION V5.7 PITCHER INTELLIGENCE")
 
 def run(games):
 
-    print("🏦 SHARP MONEY V5.6 PITCHER ENGINE START")
+    print("🏦 SHARP MONEY V5.7 PITCHER ENGINE START")
 
     if not games:
         print("❌ No games found")
@@ -11,10 +11,13 @@ def run(games):
     report = []
 
     for game in games:
+
         try:
+
             home = game["home"]
             away = game["away"]
             odds = game["odds"]
+
             pitchers = game.get("pitchers", {})
 
             home_odds = odds.get(home)
@@ -28,7 +31,9 @@ def run(games):
             # =========================
             home_prob = 1 / home_odds
             away_prob = 1 / away_odds
+
             total = home_prob + away_prob
+
             home_prob = (home_prob / total) * 100
             away_prob = (away_prob / total) * 100
 
@@ -45,9 +50,10 @@ def run(games):
             edge = prob - 50
 
             # =========================
-            # STEAM
+            # STEAM (base estructural)
             # =========================
             steam_value = game.get("movement", 0)
+
             if steam_value >= 3:
                 steam = "🔥 SHARP MONEY IN"
             elif steam_value <= -3:
@@ -56,33 +62,56 @@ def run(games):
                 steam = "⚪ NEUTRAL"
 
             # =========================
-            # PITCHERS INFO
+            # PITCHERS (REAL READY)
             # =========================
-            home_pitcher = pitchers.get(home, {"name": "TBD", "ERA": "-", "WHIP": "-"})
-            away_pitcher = pitchers.get(away, {"name": "TBD", "ERA": "-", "WHIP": "-"})
+            def get_pitcher(team):
+                p = pitchers.get(team)
+                if not p:
+                    return {"name": "TBD", "ERA": "-", "WHIP": "-"}
+                return {
+                    "name": p.get("name", "TBD"),
+                    "ERA": p.get("ERA", "-"),
+                    "WHIP": p.get("WHIP", "-")
+                }
+
+            home_p = get_pitcher(home)
+            away_p = get_pitcher(away)
 
             pitcher_info = (
-                f"{away_pitcher['name']} (ERA: {away_pitcher['ERA']}, WHIP: {away_pitcher['WHIP']}) vs "
-                f"{home_pitcher['name']} (ERA: {home_pitcher['ERA']}, WHIP: {home_pitcher['WHIP']})"
+                f"{away_p['name']} (ERA: {away_p['ERA']}, WHIP: {away_p['WHIP']}) vs "
+                f"{home_p['name']} (ERA: {home_p['ERA']}, WHIP: {home_p['WHIP']})"
             )
 
             # =========================
-            # SCORE
+            # SCORE V5.7 (MEJORADO)
             # =========================
-            score = prob + (edge * 0.6)
+            score = prob + (edge * 0.65)
+
+            # bonus pitcher quality si existe data real
+            if away_p["ERA"] != "-" and home_p["ERA"] != "-":
+                try:
+                    away_era = float(away_p["ERA"])
+                    home_era = float(home_p["ERA"])
+
+                    # ventaja al pitcher con menor ERA
+                    if (home_era < away_era and pick == home) or (away_era < home_era and pick == away):
+                        score += 1.5
+                except:
+                    pass
+
             if steam == "🔥 SHARP MONEY IN":
                 score += 2
             elif steam == "❄️ REVERSE LINE":
                 score -= 2
 
             # =========================
-            # NIVEL
+            # NIVEL V5.7
             # =========================
-            if score >= 68:
+            if score >= 70:
                 level = "🔥 ELITE"
-            elif score >= 64:
+            elif score >= 66:
                 level = "✅ STRONG"
-            elif score >= 60:
+            elif score >= 62:
                 level = "⚠️ LEAN"
             else:
                 continue
@@ -101,9 +130,6 @@ def run(games):
                 "pitcher": pitcher_info
             })
 
-            # =========================
-            # PRINT POR JUEGO
-            # =========================
             print()
             print(f"⚾ {away} vs {home}")
             print(f"🎯 Pick: {pick}")
@@ -119,9 +145,6 @@ def run(games):
             print("❌ Game error:", e)
             continue
 
-    # =========================
-    # ORDENAR POR SCORE
-    # =========================
     report.sort(key=lambda x: x["score"], reverse=True)
 
     return report
