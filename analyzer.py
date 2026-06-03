@@ -43,36 +43,84 @@ def load_history():
 
 
 # =========================
-# GET LATEST GAMES
+# GET LATEST SNAPSHOTS
 # =========================
 def latest_games(history):
     games = {}
 
-    for row in reversed(history):
+    for row in history:
         key = f"{row.get('away_team')}_{row.get('home_team')}"
-        if key not in games:
-            games[key] = row
+        games.setdefault(key, []).append(row)
 
-    return list(games.values())
+    return games
 
 
 # =========================
-# PICK MODEL (PRE-GAME FILTERED)
+# STEAM + CLV ANALYSIS
 # =========================
-def pick_winner(game):
-    odds = game.get("odds", {})
-
-    if len(odds) < 2:
+def analyze_steam(game_snapshots):
+    if len(game_snapshots) < 2:
         return None
 
-    winner = min(odds, key=odds.get)
-    prob = (1 / odds[winner]) * 100
+    first = game_snapshots[0]
+    last = game_snapshots[-1]
 
-    return winner, prob
+    odds_first = first.get("odds", {})
+    odds_last = last.get("odds", {})
+
+    if not odds_first or not odds_last:
+        return None
+
+    # comparar favorito inicial vs final
+    first_fav = min(odds_first, key=odds_first.get)
+    last_fav = min(odds_last, key=odds_last.get)
+
+    steam_direction = "neutral"
+
+    if first_fav == last_fav:
+        steam_direction = "confirmed"
+    else:
+        steam_direction = "reverse"
+
+    # CLV proxy: mejora o empeora precio
+    first_price = odds_first[first_fav]
+    last_price = odds_last.get(first_fav, first_price)
+
+    clv = (first_price - last_price)  # positivo = mejoró
+
+    return {
+        "steam": steam_direction,
+        "clv": clv,
+        "fav": last_fav
+    }
 
 
 # =========================
-# ANTI-SPAM HASH
+# PICK SCORE (SHARP FILTER)
+# =========================
+def score_pick(prob, steam_data):
+    score = 0
+
+    # base probability
+    if prob >= 62:
+        score += 2
+    elif prob >= 59:
+        score += 1
+
+    # steam logic
+    if steam_data:
+        if steam_data["steam"] == "confirmed":
+            score += 2
+        if steam_data["clv"] > 0:
+            score += 2
+        if steam_data["steam"] == "reverse":
+            score -= 2
+
+    return score
+
+
+# =========================
+# HASH ANTI-SPAM
 # =========================
 def make_hash(text):
     return hashlib.md5(text.encode()).hexdigest()
@@ -101,66 +149,60 @@ def main():
 
     picks = []
 
-    # =========================
-    # FILTER PRE-GAME (CLAVE)
-    # =========================
-    for game in games:
+    for key, snaps in games.items():
 
-        result = pick_winner(game)
-        if not result:
+        snaps = sorted(snaps, key=lambda x: x["time"])
+
+        steam = analyze_steam(snaps)
+
+        latest = snaps[-1]
+        odds = latest.get("odds", {})
+
+        if len(odds) < 2:
             continue
 
-        winner, prob = result
+        winner = min(odds, key=odds.get)
+        prob = (1 / odds[winner]) * 100
 
-        # 🔥 FILTRO MÁS ESTRICTO (menos ruido)
-        if prob < 59:
-            continue
+        score = score_pick(prob, steam)
 
-        edge = prob - 50
-
-        # solo picks realmente “jugables”
-        if edge < 9:
+        # 🔥 SHARP FILTER FINAL
+        if score < 3:
             continue
 
         picks.append({
-            "game": f"{game.get('away_team')} vs {game.get('home_team')}",
+            "game": f"{latest.get('away_team')} vs {latest.get('home_team')}",
             "pick": winner,
             "prob": round(prob, 2),
-            "edge": round(edge, 2)
+            "steam": steam["steam"] if steam else "none",
+            "clv": round(steam["clv"], 3) if steam else 0,
+            "score": score
         })
 
-    # ordenar calidad real
-    picks = sorted(picks, key=lambda x: x["edge"], reverse=True)
+    # ordenar por calidad real
+    picks = sorted(picks, key=lambda x: x["score"], reverse=True)
 
     # =========================
     # REPORT
     # =========================
-    report = "🏦 MLB PRE-GAME FINAL\n\n"
+    report = "🏦 MLB STEAM + SHARP MONEY V8\n\n"
 
     for p in picks:
         report += (
             f"⚾ {p['game']}\n"
             f"🎯 Pick: {p['pick']}\n"
             f"📊 Prob: {p['prob']}%\n"
-            f"📈 Edge: {p['edge']}%\n"
+            f"🧠 Steam: {p['steam']}\n"
+            f"📉 CLV: {p['clv']}\n"
+            f"⭐ Score: {p['score']}\n"
             f"----------------------\n"
         )
 
-    # =========================
-    # PARLEY ESTABLE (2–4 PICKS)
-    # =========================
     if len(picks) >= 2:
-        report += "\n🔥 PARLEY PRE-GAME\n\n"
-
+        report += "\n🔥 PARLEY STEAM\n\n"
         for p in picks[:4]:
             report += f"✔ {p['pick']} ({p['game']})\n"
 
-    else:
-        report += "\n⚠️ Sin parley estable hoy (poca edge quality)\n"
-
-    # =========================
-    # ANTI-SPAM FINAL
-    # =========================
     if was_sent(report):
         print("⚠️ DUPLICATE REPORT - SKIPPED")
         return
@@ -168,7 +210,7 @@ def main():
     send(report)
     mark_sent(report)
 
-    print("✅ PRE-GAME ANALYZER DONE")
+    print("✅ STEAM ANALYZER DONE")
 
 
 if __name__ == "__main__":
