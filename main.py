@@ -24,7 +24,7 @@ def send(msg):
 
 def main():
 
-    print("🏦 SHARP MONEY V5.4 CLEAN ENGINE START")
+    print("🏦 SHARP MONEY V5.6 CLEAN ENGINE START")
 
     games = collector.run()
     report = analyzer.run(games)
@@ -35,13 +35,11 @@ def main():
         print("❌ No report generated")
         return
 
-    # ordenar por confianza
-    report = sorted(report, key=lambda x: x["probability"], reverse=True)
-
-    top5 = report[:5]
+    # ordenar por score si existe, si no por probabilidad
+    report = sorted(report, key=lambda x: x.get("score", x["probability"]), reverse=True)
 
     # =========================
-    # ENVIAR CADA JUEGO
+    # ENVÍO POR JUEGO (1 MSG)
     # =========================
     for r in report:
 
@@ -50,7 +48,9 @@ def main():
             f"🎯 Pick: {r['pick']}\n"
             f"📊 Confianza: {r['probability']}%\n"
             f"📈 Edge: {r['edge']}%\n"
-            f"📊 Steam: {r['steam']}\n"
+            f"📡 Steam: {r['steam']}\n"
+            f"🧾 Pitchers: {r.get('pitcher','TBD')}\n"
+            f"🧠 Score: {r.get('score','N/A')}\n"
             f"🏷 Nivel: {r['level']}\n"
             "━━━━━━━━━━━━━━"
         )
@@ -60,7 +60,9 @@ def main():
     # =========================
     # TOP 5 SUMMARY
     # =========================
-    summary = "🏦 MLB SHARP MONEY V5.4\n\n🔥 TOP 5 PICKS\n\n"
+    top5 = report[:5]
+
+    summary = "🏦 MLB SHARP MONEY V5.6\n\n🔥 TOP 5 PICKS\n\n"
 
     for i, r in enumerate(top5, 1):
         summary += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
