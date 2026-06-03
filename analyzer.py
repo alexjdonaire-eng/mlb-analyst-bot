@@ -1,10 +1,15 @@
 import os
 import requests
+import json
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-MIN_SCORE = 7.5  # más estricto = más precisión
+MIN_SCORE = 8.0
+
+# 📦 memoria simple de line movement (Railway runtime)
+LAST_ODDS_FILE = "last_odds.json"
+
 
 def send(msg):
     requests.post(
@@ -13,21 +18,35 @@ def send(msg):
         timeout=15
     )
 
+
 def implied_prob(odds):
     return (1 / odds) * 100
 
 
-# 🔥 elimina sesgo del mercado (normalización simple)
-def normalize_probs(p1, p2):
-    total = p1 + p2
-    return (p1 / total) * 100, (p2 / total) * 100
+def load_last():
+    try:
+        with open(LAST_ODDS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def save_last(data):
+    try:
+        with open(LAST_ODDS_FILE, "w") as f:
+            json.dump(data, f)
+    except:
+        pass
 
 
 def run(games):
 
-    print("🧠 ANALYZER V2.1 START")
+    print("🧠 ANALYZER V3.5 LINE MOVEMENT START")
 
-    report = "🏦 SHARP MONEY ANALYZER V2.1\n\n"
+    last = load_last()
+    current = {}
+
+    report = "🏦 SHARP MONEY V3.5 LINE MOVEMENT\n\n"
     picks = 0
 
     for g in games:
@@ -42,49 +61,73 @@ def run(games):
         oa = odds[team_a]
         ob = odds[team_b]
 
+        # 📊 prob actual
         pa = implied_prob(oa)
         pb = implied_prob(ob)
 
-        # 🔧 normalización (reduce sesgo de cuota)
-        pa, pb = normalize_probs(pa, pb)
+        total = pa + pb
+        pa = (pa / total) * 100
+        pb = (pb / total) * 100
 
-        # edge real comparativo (no contra 50)
-        edge_a = pa - pb
-        edge_b = pb - pa
-
-        if edge_a > edge_b:
+        # 🎯 pick base
+        if pa > pb:
             pick = team_a
-            score = edge_a
+            base_score = pa - pb
         else:
             pick = team_b
-            score = edge_b
+            base_score = pb - pa
 
-        # 🧠 penalización por mercado muy equilibrado (ruido)
-        market_noise = abs(pa - pb)
-        score_adjusted = score + (market_noise * 0.2)
+        # 📦 key del juego
+        key = f"{g['home']}|{g['away']}"
 
-        if score_adjusted < MIN_SCORE:
+        # 📈 LINE MOVEMENT DETECTION
+        prev = last.get(key)
+
+        movement_score = 0
+
+        if prev:
+            prev_a = prev["a"]
+            prev_b = prev["b"]
+
+            # movimiento hacia favorito/underdog
+            movement_score = abs((pa - prev_a) + (pb - prev_b))
+
+            # dirección del movimiento
+            if (pa > prev_a and pick == team_a) or (pb > prev_b and pick == team_b):
+                movement_score *= 1.2  # confirma sharp direction
+            else:
+                movement_score *= 0.8  # movimiento contra pick
+
+        # 🧠 SCORE FINAL (sharp logic)
+        score = base_score + (movement_score * 0.6)
+
+        current[key] = {"a": pa, "b": pb}
+
+        if score < MIN_SCORE:
             continue
 
-        if score_adjusted > 15:
-            status = "🔥 STRONG SHARP"
-        elif score_adjusted > 10:
-            status = "⚡ VALUE"
+        if score > 16:
+            status = "🔥 STRONG SHARP (STEAM)"
+        elif score > 11:
+            status = "⚡ SHARP MOVE"
         else:
-            status = "📊 EDGE"
+            status = "📊 VALUE MOVE"
 
         report += (
             f"⚾ {g['away']} vs {g['home']}\n"
             f"🎯 Pick: {pick}\n"
-            f"📈 Score: {score_adjusted:.2f}\n"
+            f"📈 Score: {score:.2f}\n"
+            f"📊 Movement: {movement_score:.2f}\n"
             f"🏷 Status: {status}\n\n"
             "----------------\n"
         )
 
         picks += 1
 
+    save_last(current)
+
     if picks == 0:
-        report += "⚠️ No value detected (market efficient)"
+        report += "⚠️ No sharp movement detected"
 
     send(report)
 
