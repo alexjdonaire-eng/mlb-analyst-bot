@@ -1,3 +1,5 @@
+print("🔥 ANALYZER VERSION NUEVA")
+
 def run(games):
 
     print("🏦 SHARP MONEY V4 INSTITUTIONAL")
@@ -50,8 +52,8 @@ def run(games):
         report.append({
             "game": f"{away} vs {home}",
             "pick": pick,
-            "probability": round(prob,2),
-            "edge": round(edge,2)
+            "probability": round(prob, 2),
+            "edge": round(edge, 2)
         })
 
     return report
