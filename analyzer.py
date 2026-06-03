@@ -1,47 +1,43 @@
-def safe_float(x):
-    try:
-        return float(x)
-    except:
-        return 4.5
-
-
-def analyze_games(games_data):
+def analyze_games(games):
 
     report = []
 
-    for g in games_data:
+    seen = set()
+
+    for g in games:
 
         home = g["home_team"]
         away = g["away_team"]
 
+        key = f"{away}_vs_{home}"
+        if key in seen:
+            continue
+        seen.add(key)
+
         hp = g["home_pitcher"]
         ap = g["away_pitcher"]
 
-        home_era = safe_float(hp["ERA"])
-        away_era = safe_float(ap["ERA"])
-        home_whip = safe_float(hp["WHIP"])
-        away_whip = safe_float(ap["WHIP"])
+        def f(x):
+            try:
+                return float(x)
+            except:
+                return 4.5
 
-        # =========================
-        # CORE V6 MODEL
-        # =========================
-        diff = (away_era + away_whip) - (home_era + home_whip)
+        diff = (f(ap["ERA"]) + f(ap["WHIP"])) - (f(hp["ERA"]) + f(hp["WHIP"]))
 
-        confidence = 50 + diff * 8.2
-        confidence = max(40, min(confidence, 78))
+        confidence = 50 + diff * 8
+        confidence = round(max(40, min(confidence, 78)), 2)
 
-        pick = home if confidence < 50 else away
+        pick = away if confidence >= 50 else home
 
-        # totales más agresivos
-        total = 7.5
-        if (home_era + away_era) > 8:
-            total = 9.0
-        elif (home_era + away_era) < 5.5:
-            total = 7.0
+        total = 8.5
+        if (f(hp["ERA"]) + f(ap["ERA"])) > 9:
+            total = 9.5
+        elif (f(hp["ERA"]) + f(ap["ERA"])) < 5.5:
+            total = 7.5
 
         handicap = "-1.5" if pick == away else "+1.5"
 
-        # nivel
         if confidence >= 70:
             level = "🔥 ELITE"
         elif confidence >= 62:
@@ -49,20 +45,21 @@ def analyze_games(games_data):
         elif confidence >= 55:
             level = "⚠️ LEAN"
         else:
-            level = "🚫 PASS"
-
-        # SOLO VALUE BETS
-        if confidence < 55:
-            continue
+            continue  # ❌ FILTRO FUERTE (NO PASAR)
 
         report.append({
             "home_team": home,
             "away_team": away,
+            "home_pitcher": hp,
+            "away_pitcher": ap,
             "pick": pick,
-            "confidence": round(confidence, 2),
+            "confidence": confidence,
             "total": total,
             "handicap": handicap,
             "level": level
         })
+
+    # 🔥 ORDENAR Y LIMITAR
+    report = sorted(report, key=lambda x: x["confidence"], reverse=True)[:10]
 
     return report
