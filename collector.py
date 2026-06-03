@@ -3,10 +3,6 @@ import json
 import requests
 from datetime import datetime, timezone
 
-# =========================
-# CONFIG
-# =========================
-
 ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
 API_KEY = os.getenv("ODDS_API_KEY")
@@ -15,36 +11,25 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "market_history.jsonl"
 
-
 # =========================
 # TELEGRAM
 # =========================
-
 def send_telegram(msg):
-    """Envía mensaje a Telegram con debug de errores"""
-    if not TOKEN or not CHAT_ID:
-        print("⚠️ Faltan variables de entorno TOKEN o CHAT_ID")
-        return
-
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": msg},
-            timeout=20
+            timeout=15
         )
         if r.status_code != 200:
-            print("❌ Error enviando Telegram:", r.status_code, r.text)
-        else:
-            print("✅ Mensaje enviado a Telegram")
+            print("⚠️ Telegram error:", r.text)
     except Exception as e:
-        print("❌ Excepción enviando Telegram:", e)
-
+        print("⚠️ Telegram exception:", e)
 
 # =========================
-# GET ODDS
+# FETCH ODDS
 # =========================
-
-def get_odds():
+def fetch_odds():
     try:
         r = requests.get(
             ODDS_URL,
@@ -54,103 +39,88 @@ def get_odds():
                 "markets": "h2h",
                 "oddsFormat": "decimal"
             },
-            timeout=30
+            timeout=20
         )
-        print("ODDS STATUS:", r.status_code)
         if r.status_code != 200:
-            print(r.text)
+            print("⚠️ Odds API error:", r.status_code, r.text)
             return []
-        return r.json()
+        data = r.json()
+        print(f"📊 Fetched {len(data)} games from Odds API")
+        return data
     except Exception as e:
-        print("❌ Error obteniendo odds:", e)
+        print("⚠️ Odds fetch exception:", e)
         return []
 
-
 # =========================
-# HISTORIAL
+# LOAD LAST SNAPSHOT
 # =========================
-
 def load_last_snapshot():
-    """Carga el último snapshot guardado"""
     try:
+        if not os.path.exists(HISTORY_FILE):
+            return {}
         with open(HISTORY_FILE, "r") as f:
             lines = f.readlines()
             if not lines:
                 return {}
             return json.loads(lines[-1])
-    except FileNotFoundError:
-        print("📂 No existe el archivo de historial, se creará uno nuevo")
-        return {}
     except Exception as e:
-        print("❌ Error leyendo historial:", e)
+        print("⚠️ Load snapshot exception:", e)
         return {}
 
-
-def save_snapshot(data):
-    """Guarda snapshot en archivo JSONL"""
+# =========================
+# SAVE SNAPSHOT
+# =========================
+def save_snapshot(snapshot):
     try:
         with open(HISTORY_FILE, "a") as f:
-            f.write(json.dumps(data) + "\n")
+            f.write(json.dumps(snapshot) + "\n")
     except Exception as e:
-        print("❌ Error guardando snapshot:", e)
-
+        print("⚠️ Save snapshot exception:", e)
 
 # =========================
-# MAIN
+# MAIN COLLECTOR
 # =========================
-
 def main():
     print("🚨 COLLECTOR STARTED")
+    send_telegram("🚨 COLLECTOR STARTED")  # debug guarantee
 
-    odds = get_odds()
-    if not odds:
-        send_telegram("⚠️ COLLECTOR: No se obtuvieron odds.")
+    odds_data = fetch_odds()
+    if not odds_data:
+        send_telegram("⚠️ No data fetched from Odds API")
         return
 
     last_snapshot = load_last_snapshot()
-    last_ids = set(last_snapshot.keys() if isinstance(last_snapshot, dict) else [])
+    last_ids = set(last_snapshot.keys()) if last_snapshot else set()
 
-    current_snapshot = {}
     saved = 0
+    current_snapshot = {}
 
-    for game in odds:
-        try:
-            if not game.get("bookmakers"):
-                continue
+    for game in odds_data:
+        if not game.get("bookmakers"):
+            continue
+        book = game["bookmakers"][0]
+        if not book.get("markets"):
+            continue
 
-            book = game["bookmakers"][0]
-            if not book.get("markets"):
-                continue
+        game_id = game["id"]
+        snapshot = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "game_id": game_id,
+            "home_team": game["home_team"],
+            "away_team": game["away_team"],
+            "odds": {o["name"]: o["price"] for o in book["markets"][0]["outcomes"]}
+        }
 
-            game_id = game["id"]
-            snapshot = {
-                "time": datetime.now(timezone.utc).isoformat(),
-                "game_id": game_id,
-                "home_team": game["home_team"],
-                "away_team": game["away_team"],
-                "odds": {}
-            }
+        current_snapshot[game_id] = snapshot
 
-            for o in book["markets"][0]["outcomes"]:
-                snapshot["odds"][o["name"]] = o["price"]
+        if game_id not in last_ids:
+            save_snapshot(snapshot)
+            saved += 1
 
-            # Guardar solo si es nuevo
-            if game_id not in last_ids:
-                save_snapshot(snapshot)
-                saved += 1
-
-            current_snapshot[game_id] = snapshot
-
-        except Exception as e:
-            print("❌ Error procesando juego:", e)
-
-    # Mensaje final a Telegram
-    msg = f"✅ COLLECTOR RUN\n\nNew snapshots: {saved}\nGames found: {len(odds)}"
-    send_telegram(msg)
-
-    print("FINISHED")
+    msg = f"✅ COLLECTOR RUN\nNew snapshots: {saved}\nTotal games fetched: {len(odds_data)}"
     print(msg)
-
+    send_telegram(msg)
+    print("FINISHED")
 
 if __name__ == "__main__":
     main()
