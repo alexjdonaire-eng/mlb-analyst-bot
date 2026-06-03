@@ -1,8 +1,8 @@
 import os
 import asyncio
-from analyzer import analyze_games
-from collector import fetch_mlb_games
 from telegram import Bot
+from collector import fetch_mlb_games
+from analyzer import analyze_games
 
 # Configuración de Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -24,27 +24,39 @@ async def send_game_message(game):
 🏷 Nivel: {game['level']}
 💎 Jugada recomendada: {game['recommended']}
 """
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    try:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        print(f"✅ Sent: {game['away_team']} vs {game['home_team']}")
+    except Exception as e:
+        print(f"❌ Error enviando a Telegram: {e}")
 
 async def main():
     print("🚀 MibotMLB V5.18 START")
+    
+    # Descargar juegos
     print("📡 Descargando juegos MLB...")
     games_data = fetch_mlb_games()
     print(f"📊 Juegos descargados: {len(games_data)}")
-
+    
+    # Analizar juegos
     print("🧠 Corriendo analyzer...")
-    games_report = analyze_games(games_data, games_data)  # Usamos los datos del collector directamente
+    games_report = analyze_games({"dates":[{"games": games_data}]}, games_data)  # formato compatible con analyzer
 
+    # Enviar mensajes individuales
     tasks = [send_game_message(game) for game in games_report]
     await asyncio.gather(*tasks)
 
-    # Opcional: enviar TOP 5 del día
-    top_games = sorted(games_report, key=lambda x: x['confidence'], reverse=True)[:5]
-    top_message = "🔥 TOP 5 DEL DÍA\n\n"
-    for i, g in enumerate(top_games, start=1):
-        top_message += f"{i}️⃣ {g['pick']} — {g['confidence']}%\n"
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=top_message)
-    print("✅ Mensajes enviados!")
+    # Enviar TOP 5 por confianza
+    top5 = sorted(games_report, key=lambda x: x["confidence"], reverse=True)[:5]
+    top_msg = "🔥 TOP 5 DEL DÍA\n\n"
+    for i, g in enumerate(top5, 1):
+        top_msg += f"{i}️⃣ {g['pick']} — {g['confidence']}%\n"
+
+    try:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=top_msg)
+        print("✅ TOP 5 enviado")
+    except Exception as e:
+        print(f"❌ Error enviando TOP 5: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
