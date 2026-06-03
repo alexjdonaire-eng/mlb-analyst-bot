@@ -4,7 +4,7 @@ import requests
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-MIN_SCORE = 9.0
+MIN_SCORE = 11.0
 
 
 def send(msg):
@@ -19,89 +19,105 @@ def implied_prob(odds):
     return (1 / odds) * 100
 
 
-# 🧠 normaliza mercado (reduce sesgo de cuotas extremas)
-def normalize(a, b):
+def normalize_two(a, b):
     total = a + b
     return (a / total) * 100, (b / total) * 100
 
 
+# 🧠 pseudo volatility (proxy sin histórico real de lines movement)
+def volatility_proxy(p1, p2):
+    return abs(p1 - p2) / (p1 + p2)
+
+
 def run(games):
 
-    print("🏦 SHARP MONEY V4 INSTITUTIONAL REAL START")
+    print("🏦 SHARP MONEY V5 HEDGE FUND START")
 
-    report = "🏦 SHARP MONEY V4 INSTITUTIONAL REAL\n\n"
+    report = "🏦 SHARP MONEY V5 — HEDGE FUND MODEL\n\n"
+
     picks = 0
 
     for g in games:
 
-        odds = g["odds"]
+        odds = g.get("odds", {})
 
         if len(odds) < 2:
             continue
 
         teams = list(odds.keys())
 
-        # 📊 prob implícita base
+        # 📊 implied probability
         probs = {t: implied_prob(o) for t, o in odds.items()}
 
-        # 🔧 normalización de mercado
-        vals = list(probs.values())
-        norm_vals = normalize(vals[0], vals[1])
+        # 🔧 normalize market
+        p1, p2 = normalize_two(probs[teams[0]], probs[teams[1]])
 
-        probs[teams[0]] = norm_vals[0]
-        probs[teams[1]] = norm_vals[1]
+        probs[teams[0]] = p1
+        probs[teams[1]] = p2
 
-        # 🎯 favorito / underdog
         fav = max(probs, key=probs.get)
         dog = min(probs, key=probs.get)
 
-        fav_score = probs[fav]
-        dog_score = probs[dog]
+        fav_p = probs[fav]
+        dog_p = probs[dog]
 
-        # 📈 edge base
-        edge = abs(fav_score - dog_score)
+        # 📉 EDGE
+        edge = abs(fav_p - dog_p)
 
-        # 🧠 MARKET CONSENSUS SCORE (institucional clave)
-        consensus = (fav_score + dog_score) / 2
+        # 🧠 MARKET PRESSURE (dominancia del favorito)
+        pressure = fav_p / (fav_p + dog_p)
 
-        # 🧠 SHARP DISLOCATION (desbalance del mercado)
-        dislocation = edge * (1 + abs(50 - consensus) / 50)
+        # 🧠 VOLATILITY PROXY (clave V5)
+        vol = volatility_proxy(fav_p, dog_p)
 
-        # 🧠 FINAL SCORE (modelo institucional)
-        score = (edge * 0.6) + (dislocation * 0.4)
+        # 🧠 CONSENSUS STABILITY SCORE
+        stability = 1 - vol
 
-        pick = fav if fav_score > dog_score else dog
+        # 🧠 "CLOSING LINE PROXY"
+        # simulamos que el mercado eficiente empuja hacia equilibrio
+        clv_proxy = edge * stability * (1 + pressure)
+
+        # 🧠 FINAL SHARP SCORE V5
+        score = (
+            edge * 0.35 +
+            clv_proxy * 0.45 +
+            stability * 10 * 0.2
+        )
+
+        pick = fav
 
         if score < MIN_SCORE:
             continue
 
-        # 🧠 clasificación institucional
-        if score > 18:
-            status = "🔥 INSTITUTIONAL SHARP"
+        # 🧠 classification
+        if score > 20:
+            tag = "🔥 HEDGE FUND SHARP"
+        elif score > 16:
+            tag = "⚡ INSTITUTIONAL EDGE"
         elif score > 13:
-            status = "⚡ SHARP MONEY"
-        elif score > 10:
-            status = "📊 CONSENSUS VALUE"
+            tag = "📊 SHARP VALUE"
         else:
-            status = "📈 EDGE"
+            tag = "📈 WEAK EDGE"
 
         report += (
-            f"⚾ {g['away']} vs {g['home']}\n"
+            f"⚾ {g.get('away')} vs {g.get('home')}\n"
             f"🎯 Pick: {pick}\n"
-            f"📊 Score: {score:.2f}\n"
+            f"📊 Score V5: {score:.2f}\n"
             f"📉 Edge: {edge:.2f}\n"
-            f"🧠 Consensus: {consensus:.2f}\n"
-            f"🏷 Status: {status}\n\n"
-            "----------------\n"
+            f"🧠 Pressure: {pressure:.2f}\n"
+            f"📊 Stability: {stability:.2f}\n"
+            f"📈 CLV Proxy: {clv_proxy:.2f}\n"
+            f"🏷 Status: {tag}\n\n"
+            "----------------------\n"
         )
 
         picks += 1
 
     if picks == 0:
-        report += "⚠️ No institutional edge detected (market efficient)"
+        report += "⚠️ No hedge fund edge detected (market efficient zone)"
 
     send(report)
 
-    print(f"✅ PICKS SENT: {picks}")
+    print(f"✅ V5 PICKS SENT: {picks}")
 
     return report
