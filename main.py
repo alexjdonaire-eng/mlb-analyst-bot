@@ -1,98 +1,97 @@
 import os
 import requests
-from analyzer import analyze_games, format_games_message
+from analyzer import analyze_games
 
-# =========================
-# CONFIG
-# =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-ODDS_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-# =========================
-# FETCH GAMES (ROBUSTO)
-# =========================
 def fetch_games():
-    try:
-        params = {
-            "apiKey": ODDS_API_KEY,
-            "regions": "us",
-            "markets": "h2h,spreads,totals",
-            "oddsFormat": "decimal"
-        }
+    params = {
+        "apiKey": os.getenv("ODDS_API_KEY"),
+        "regions": "us",
+        "markets": "h2h,spreads,totals",
+        "oddsFormat": "decimal"
+    }
 
-        resp = requests.get(ODDS_URL, params=params, timeout=25)
+    r = requests.get(URL, params=params, timeout=20)
+    data = r.json()
 
-        print("STATUS:", resp.status_code)
-
-        try:
-            data = resp.json()
-        except:
-            print("ERROR JSON INVALID")
-            return []
-
-        if not isinstance(data, list):
-            print("API ERROR:", data)
-            return []
-
-        print(f"📊 Games loaded: {len(data)}")
-        return data
-
-    except Exception as e:
-        print("FETCH ERROR:", e)
+    if not isinstance(data, list):
         return []
 
-# =========================
-# TELEGRAM SEND
-# =========================
-def send_telegram(text):
+    return data
+
+
+def send(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
+    requests.post(url, data={
         "chat_id": CHAT_ID,
-        "text": text,
+        "text": msg,
         "parse_mode": "HTML"
-    }
-    try:
-        requests.post(url, data=payload, timeout=15)
-    except Exception as e:
-        print("Telegram error:", e)
+    })
 
-# =========================
-# MAIN
-# =========================
+
+def format_game(g):
+    return f"""
+⚾ {g['home']} vs {g['away']}
+
+🧾 Lanzadores
+{g['home']}: {g['home_pitcher']['name']} (ERA {g['home_pitcher']['era']} | WHIP {g['home_pitcher']['whip']})
+{g['away']}: {g['away_pitcher']['name']} (ERA {g['away_pitcher']['era']} | WHIP {g['away_pitcher']['whip'])}
+
+🎯 Ganador: {g['winner']} ({g['confidence']}%)
+
+⚾ Total: {g['total_type']} {g['total']}
+⚾ Hándicap: {g['spread_team']} -1.5
+
+📊 Confianza: {g['confidence']}%
+🏷 Nivel: {g['level']}
+💎 Jugada: {g['recommendation']}
+
+━━━━━━━━━━━━━━
+"""
+
+
 def main():
-    print("🚀 MIBOT MLB V8 PRO START")
-
     games = fetch_games()
 
     if not games:
-        send_telegram("⚠️ No hay juegos disponibles o error en la API")
+        send("⚠️ No hay juegos hoy o error API")
         return
 
     analyzed = analyze_games(games)
 
-    # enviar en bloques de 4 juegos (limpio Telegram)
-    batch = 4
-    for i in range(0, len(analyzed), batch):
-        chunk = analyzed[i:i+batch]
-        msg = format_games_message(chunk)
-        send_telegram(msg)
+    # 🔥 IMPORTANTÍSIMO: evitar spam + duplicados
+    sent = set()
 
-    # TOP PICKS separados
-    winners = [g["winner_line"] for g in analyzed if g["confidence"] >= 60]
-    totals = [g["total_line"] for g in analyzed if g["confidence"] >= 60]
-    spreads = [g["spread_line"] for g in analyzed if g["confidence"] >= 60]
+    batch = []
 
-    if winners:
-        send_telegram("<b>🔥 TOP PICKS GANADOR</b>\n" + "\n".join(winners[:5]))
+    for g in analyzed:
+        key = f"{g['home']}vs{g['away']}"
+        if key in sent:
+            continue
+        sent.add(key)
 
-    if totals:
-        send_telegram("<b>🔥 TOP PICKS TOTALES</b>\n" + "\n".join(totals[:5]))
+        batch.append(format_game(g))
 
-    if spreads:
-        send_telegram("<b>🔥 TOP PICKS HÁNDICAP</b>\n" + "\n".join(spreads[:5]))
+        if len(batch) == 3:
+            send("\n".join(batch))
+            batch = []
+
+    if batch:
+        send("\n".join(batch))
+
+    # TOP PICKS LIMPIO
+    top = sorted(analyzed, key=lambda x: x["confidence"], reverse=True)[:5]
+
+    top_msg = "🔥 TOP PICKS DEL DÍA\n\n"
+    for i, g in enumerate(top, 1):
+        top_msg += f"{i}. {g['winner']} ({g['confidence']}%)\n"
+
+    send(top_msg)
+
 
 if __name__ == "__main__":
     main()
