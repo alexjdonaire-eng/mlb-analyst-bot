@@ -26,7 +26,7 @@ def send(msg):
 
 
 # =========================
-# HISTORY
+# LOAD HISTORY
 # =========================
 def load_history():
     rows = []
@@ -43,7 +43,7 @@ def load_history():
 
 
 # =========================
-# LATEST SNAPSHOT PER GAME
+# GET LATEST GAMES
 # =========================
 def latest_games(history):
     games = {}
@@ -57,7 +57,7 @@ def latest_games(history):
 
 
 # =========================
-# PICK LOGIC
+# PICK MODEL (PRE-GAME FILTERED)
 # =========================
 def pick_winner(game):
     odds = game.get("odds", {})
@@ -66,13 +66,13 @@ def pick_winner(game):
         return None
 
     winner = min(odds, key=odds.get)
-    prob = round((1 / odds[winner]) * 100, 2)
+    prob = (1 / odds[winner]) * 100
 
     return winner, prob
 
 
 # =========================
-# HASH ANTI-SPAM
+# ANTI-SPAM HASH
 # =========================
 def make_hash(text):
     return hashlib.md5(text.encode()).hexdigest()
@@ -102,7 +102,7 @@ def main():
     picks = []
 
     # =========================
-    # BUILD PICKS (SIN LIMITE)
+    # FILTER PRE-GAME (CLAVE)
     # =========================
     for game in games:
 
@@ -112,25 +112,30 @@ def main():
 
         winner, prob = result
 
-        if prob < 58:
+        # 🔥 FILTRO MÁS ESTRICTO (menos ruido)
+        if prob < 59:
             continue
 
         edge = prob - 50
 
+        # solo picks realmente “jugables”
+        if edge < 9:
+            continue
+
         picks.append({
             "game": f"{game.get('away_team')} vs {game.get('home_team')}",
             "pick": winner,
-            "prob": prob,
-            "edge": edge
+            "prob": round(prob, 2),
+            "edge": round(edge, 2)
         })
 
-    # ordenar por calidad
+    # ordenar calidad real
     picks = sorted(picks, key=lambda x: x["edge"], reverse=True)
 
     # =========================
     # REPORT
     # =========================
-    report = "🏦 MLB PRO PARLEY CLEAN\n\n"
+    report = "🏦 MLB PRE-GAME FINAL\n\n"
 
     for p in picks:
         report += (
@@ -141,14 +146,20 @@ def main():
             f"----------------------\n"
         )
 
-    # parley dinámico (mínimo 3 picks si existen)
-    if len(picks) >= 3:
-        report += "\n🔥 PARLEY DEL DÍA\n\n"
+    # =========================
+    # PARLEY ESTABLE (2–4 PICKS)
+    # =========================
+    if len(picks) >= 2:
+        report += "\n🔥 PARLEY PRE-GAME\n\n"
+
         for p in picks[:4]:
-            report += f"✔ {p['pick']}\n"
+            report += f"✔ {p['pick']} ({p['game']})\n"
+
+    else:
+        report += "\n⚠️ Sin parley estable hoy (poca edge quality)\n"
 
     # =========================
-    # ANTI-SPAM
+    # ANTI-SPAM FINAL
     # =========================
     if was_sent(report):
         print("⚠️ DUPLICATE REPORT - SKIPPED")
@@ -157,7 +168,7 @@ def main():
     send(report)
     mark_sent(report)
 
-    print("✅ ANALYZER DONE")
+    print("✅ PRE-GAME ANALYZER DONE")
 
 
 if __name__ == "__main__":
