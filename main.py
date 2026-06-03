@@ -24,26 +24,57 @@ def main():
     print("🏦 SHARP MONEY V4 INSTITUTIONAL START")
 
     games = collector.run()
-
     report = analyzer.run(games)
 
-    if report:
+    if not report:
+        print("❌ No picks found")
+        return
 
-        message = "🏦 MLB PICKS\n\n"
+    report = sorted(
+        report,
+        key=lambda x: x["probability"],
+        reverse=True
+    )
 
-        for r in report:
+    top5 = report[:5]
+    parlay = report[:4]
 
-            message += (
-                f"⚾ {r['game']}\n"
-                f"🎯 {r['pick']}\n"
-                f"📊 {r['probability']}%\n"
-                f"📈 Edge: {r['edge']}%\n\n"
-            )
+    message = "🏦 MLB SHARP MONEY\n\n"
 
-        send(message)
+    message += "🔥 TOP 5 PICKS\n\n"
 
-        print("✅ Telegram sent")
+    for i, r in enumerate(top5, start=1):
 
+        message += (
+            f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
+        )
+
+    message += "\n━━━━━━━━━━━━━━\n\n"
+
+    for r in report:
+
+        message += (
+            f"⚾ {r['game']}\n"
+            f"🎯 {r['pick']}\n"
+            f"📊 Confianza: {r['probability']}%\n"
+            f"📈 Edge: {r['edge']}%\n\n"
+        )
+
+    message += "━━━━━━━━━━━━━━\n\n"
+    message += "💎 COMBINADA DEL DÍA\n\n"
+
+    for r in parlay:
+
+        message += f"✅ {r['pick']}\n"
+
+    message += (
+        f"\n🔥 Mejor Pick:\n"
+        f"{top5[0]['pick']} ({top5[0]['probability']}%)"
+    )
+
+    send(message)
+
+    print("✅ Telegram sent")
     print("🏁 CYCLE COMPLETE")
 
 
