@@ -1,117 +1,97 @@
 import requests
-import random
+from datetime import datetime
 
 # =========================
-# CONFIG (placeholder APIs)
+# CONFIG API (PUEDES CAMBIARLA)
 # =========================
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-
-
-# =========================
-# SIMULATED PITCHER DB (REEMPLAZABLE CON API REAL)
-# =========================
-PITCHER_DB = {
-    "Philadelphia Phillies": {
-        "Zack Wheeler": {"ERA": 2.52, "WHIP": 1.04},
-        "Aaron Nola": {"ERA": 3.01, "WHIP": 1.09},
-    },
-    "Los Angeles Dodgers": {
-        "Tyler Glasnow": {"ERA": 3.12, "WHIP": 1.15},
-        "Walker Buehler": {"ERA": 3.45, "WHIP": 1.18},
-    },
-    "default": {
-        "TBD": {"ERA": "-", "WHIP": "-"}
-    }
-}
-
+MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 
 # =========================
-# SIMULATED ODDS MOVEMENT ENGINE
-# (REEMPLAZAR CON API REAL DE ODDS HISTORY)
+# FUNCIÓN: obtener datos MLB
 # =========================
-def get_market_movement():
-    return round(random.uniform(-18, 18), 2)
+def fetch_mlb_data():
 
-
-def get_steam(movement):
-    if movement <= -10:
-        return "🔥 SHARP MONEY IN"
-    elif movement >= 10:
-        return "⚪ PUBLIC HEAVY"
-    else:
-        return "⚪ NEUTRAL"
-
-
-# =========================
-# PICK PITCHERS LOGIC
-# =========================
-def get_pitchers(home, away):
-
-    home_pitchers = PITCHER_DB.get(home, PITCHER_DB["default"])
-    away_pitchers = PITCHER_DB.get(away, PITCHER_DB["default"])
-
-    home_name = list(home_pitchers.keys())[0]
-    away_name = list(away_pitchers.keys())[0]
-
-    return {
-        "pitcher_home": {
-            "name": home_name,
-            "ERA": home_pitchers[home_name]["ERA"],
-            "WHIP": home_pitchers[home_name]["WHIP"],
-        },
-        "pitcher_away": {
-            "name": away_name,
-            "ERA": away_pitchers[away_name]["ERA"],
-            "WHIP": away_pitchers[away_name]["WHIP"],
-        },
-    }
-
-
-# =========================
-# MAIN COLLECTOR
-# =========================
-def run():
-
-    # 🔥 EN PRODUCCIÓN AQUÍ IRÍA ODDS API REAL
-    games_raw = [
-        ("San Diego Padres", "Philadelphia Phillies"),
-        ("Los Angeles Dodgers", "Arizona Diamondbacks"),
-        ("Pittsburgh Pirates", "Houston Astros"),
-        ("Kansas City Royals", "Cincinnati Reds"),
-        ("San Francisco Giants", "Milwaukee Brewers"),
-        ("Chicago White Sox", "Minnesota Twins"),
-        ("Colorado Rockies", "Los Angeles Angels"),
-        ("Baltimore Orioles", "Boston Red Sox"),
-        ("Detroit Tigers", "Tampa Bay Rays"),
-        ("Cleveland Guardians", "New York Yankees"),
-        ("New York Mets", "Seattle Mariners"),
-        ("Toronto Blue Jays", "Atlanta Braves"),
-    ]
+    try:
+        res = requests.get(MLB_SCHEDULE_URL, timeout=20)
+        data = res.json()
+    except Exception as e:
+        print(f"❌ Error fetching MLB data: {e}")
+        return []
 
     games = []
 
-    for away, home in games_raw:
+    dates = data.get("dates", [])
+    if not dates:
+        return []
 
-        movement = get_market_movement()
+    for day in dates:
+        for game in day.get("games", []):
 
-        pitchers = get_pitchers(home, away)
+            try:
+                home = game["teams"]["home"]["team"]["name"]
+                away = game["teams"]["away"]["team"]["name"]
 
-        game = {
-            "game": f"{away} vs {home}",
-            "away_team": away,
-            "home_team": home,
+                # =========================
+                # PITCHERS PROBABLES
+                # =========================
+                home_pitcher_data = game["teams"]["home"].get("probablePitcher", {})
+                away_pitcher_data = game["teams"]["away"].get("probablePitcher", {})
 
-            # odds simulation placeholder (puedes conectar API real)
-            "opening_odds": round(random.uniform(-150, -110), 2),
-            "current_odds": round(random.uniform(-170, -100), 2),
+                home_pitcher = {
+                    "name": home_pitcher_data.get("fullName", "TBD"),
+                    "ERA": fetch_pitcher_stats(home_pitcher_data.get("id")).get("era", "-"),
+                    "WHIP": fetch_pitcher_stats(home_pitcher_data.get("id")).get("whip", "-")
+                }
 
-            "movement": movement,
-            "steam": get_steam(movement),
+                away_pitcher = {
+                    "name": away_pitcher_data.get("fullName", "TBD"),
+                    "ERA": fetch_pitcher_stats(away_pitcher_data.get("id")).get("era", "-"),
+                    "WHIP": fetch_pitcher_stats(away_pitcher_data.get("id")).get("whip", "-")
+                }
 
-            # pitchers REAL STRUCTURE
-            **pitchers
+                games.append({
+                    "home_team": home,
+                    "away_team": away,
+                    "home_pitcher": home_pitcher,
+                    "away_pitcher": away_pitcher,
+                    "movement": 0,   # placeholder (puedes conectar odds API luego)
+                    "steam": "⚪ NEUTRAL"
+                })
+
+            except Exception as e:
+                print(f"❌ Game parse error: {e}")
+
+    return games
+
+# =========================
+# FUNCIÓN: stats pitcher
+# =========================
+def fetch_pitcher_stats(player_id):
+
+    if not player_id:
+        return {"era": "-", "whip": "-"}
+
+    url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
+
+    try:
+        res = requests.get(url, timeout=15)
+        data = res.json()
+
+        stats = data["stats"][0]["splits"][0]["stat"]
+
+        return {
+            "era": stats.get("era", "-"),
+            "whip": stats.get("whip", "-")
         }
 
-        games.append(game)
+    except:
+        return {"era": "-", "whip": "-"}
 
+# =========================
+# MAIN CALL
+# =========================
+def run():
+    print("📡 COLLECTOR V5.11 START")
+    games = fetch_mlb_data()
+    print(f"📊 Games loaded: {len(games)}")
     return games
