@@ -1,37 +1,59 @@
 import os
-import requests
 import asyncio
-import traceback
-from analyzer import analyze_games
+import requests
 from telegram import Bot
+from analyzer import analyze_games
+
+# =========================
+# CONFIG
+# =========================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-ODDS_API_URL = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals"
+
+MLB_SCHEDULE_URL = (
+    "https://statsapi.mlb.com/api/v1/schedule"
+    "?sportId=1&hydrate=probablePitcher,team"
+)
+
+ODDS_API_URL = (
+    f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/"
+    f"?apiKey={ODDS_API_KEY}"
+    "&regions=us"
+    "&markets=h2h,spreads,totals"
+)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-def fetch_json(url, timeout=15):
+# =========================
+# HELPERS
+# =========================
+
+def fetch_json(url, timeout=20):
     try:
-        res = requests.get(url, timeout=timeout)
-        return res.json()
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
     except Exception as e:
-        print(f"❌ Fetch error: {e}")
+        print(f"❌ Error descargando datos: {e}")
         return {}
 
-def fetch_mlb_schedule():
+def fetch_schedule():
+    print("📡 Descargando calendario MLB...")
     return fetch_json(MLB_SCHEDULE_URL)
 
 def fetch_odds():
+    print("📡 Descargando cuotas...")
     return fetch_json(ODDS_API_URL)
 
-async def send_game_message(game):
+# =========================
+# TELEGRAM
+# =========================
 
-    try:
-        message = f"""⚾ {game['away_team']} vs {game['home_team']}
+async def send_game(game):
+
+    mensaje = f"""⚾ {game['away_team']} vs {game['home_team']}
 
 🧾 Lanzadores
 
@@ -48,7 +70,7 @@ async def send_game_message(game):
 🎯 Ganador sugerido:
 {game['pick']}
 
-⚾ Total carreras:
+⚾ Total de carreras:
 {game['total']}
 
 ⚾ Hándicap:
@@ -64,46 +86,52 @@ async def send_game_message(game):
 {game['recommended']}
 """
 
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=message
-        )
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=mensaje
+    )
 
-        print(f"✅ Sent: {game['away_team']} vs {game['home_team']}")
-
-    except Exception as e:
-        print(f"❌ Telegram error: {e}")
-        traceback.print_exc()
+# =========================
+# MAIN
+# =========================
 
 async def main():
 
-    print("🚀 MibotMLB V5.16 START")
+    print("🚀 MibotMLB V5.17 START")
 
-    try:
+    schedule = fetch_schedule()
+    odds = fetch_odds()
 
-        print("📡 Downloading MLB schedule...")
-        schedule = fetch_mlb_schedule()
+    games = analyze_games(schedule, odds)
 
-        print("📡 Downloading Odds...")
-        odds = fetch_odds()
+    print(f"📊 Juegos analizados: {len(games)}")
 
-        print("🧠 Running analyzer...")
-        games_report = analyze_games(schedule, odds)
+    if not games:
+        print("❌ No hay juegos para enviar")
+        return
 
-        if not games_report:
-            print("❌ Analyzer returned 0 games")
-            return
+    enviados = 0
 
-        print(f"📊 Games returned: {len(games_report)}")
+    for game in games:
+        try:
+            await send_game(game)
+            enviados += 1
+            print(
+                f"✅ Enviado: "
+                f"{game['away_team']} vs {game['home_team']}"
+            )
 
-        for game in games_report:
-            await send_game_message(game)
+        except Exception as e:
+            print(
+                f"❌ Error enviando "
+                f"{game['away_team']} vs {game['home_team']}: {e}"
+            )
 
-        print("✅ Finished")
+    print(f"🏁 Finalizado. Mensajes enviados: {enviados}")
 
-    except Exception as e:
-        print(f"❌ MAIN ERROR: {e}")
-        traceback.print_exc()
+# =========================
+# RUN
+# =========================
 
 if __name__ == "__main__":
     asyncio.run(main())
