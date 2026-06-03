@@ -1,3 +1,4 @@
+import os
 import requests
 
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
@@ -51,6 +52,48 @@ def fetch_mlb_games():
                 continue
     return games
 
+# ===========================================
+# FETCH ODDS API
+# ===========================================
+
+def fetch_odds():
+    ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+    url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?regions=us&markets=totals,h2h,spreads&apiKey={ODDS_API_KEY}"
+    try:
+        res = requests.get(url, timeout=20)
+        data = res.json()
+    except:
+        data = []
+
+    # Transformar en dict para buscar por juego
+    odds_data = {}
+    for game in data:
+        home = game.get("home_team")
+        away = game.get("away_team")
+        key = f"{away} vs {home}"
+
+        ml_home = None
+        ml_away = None
+        total = None
+
+        for site in game.get("bookmakers", []):
+            markets = site.get("markets", [])
+            for m in markets:
+                if m["key"] == "h2h":
+                    odds = m.get("outcomes", [])
+                    for o in odds:
+                        if o["name"] == home:
+                            ml_home = float(o["price"])
+                        if o["name"] == away:
+                            ml_away = float(o["price"])
+                if m["key"] == "totals":
+                    for o in m.get("outcomes", []):
+                        total = float(o["point"])
+
+        if ml_home and ml_away and total:
+            odds_data[key] = {"ml_home": ml_home, "ml_away": ml_away, "total": total}
+
+    return odds_data
 
 # ===========================================
 # FUNCIONES DE CÁLCULO
@@ -65,19 +108,16 @@ def pitcher_score(era, whip):
     except:
         return 50
 
-
 def projected_runs(home_era, away_era):
     try:
         return float(home_era) + float(away_era)
     except:
         return 8.5
 
-
 def total_confidence(projection, total_line):
     diff = abs(projection - total_line)
     confidence = 55 + diff * 5
     return min(round(confidence), 80)
-
 
 def runline_confidence(home_prob, away_prob):
     margin = abs(home_prob - away_prob)
@@ -87,14 +127,21 @@ def runline_confidence(home_prob, away_prob):
         return 62
     return 55
 
+def implied_probability(decimal_odds):
+    try:
+        return round(100 / decimal_odds, 2)
+    except:
+        return 50
 
 # ===========================================
-# ANALYZER PRINCIPAL
+# ANALYZER PRINCIPAL CON ODDS
 # ===========================================
 
 def analyze_games(games):
     analyzed = []
     all_picks = []
+
+    odds_data = fetch_odds()
 
     for g in games:
         home = g.get("home_team", "TBD")
@@ -102,22 +149,29 @@ def analyze_games(games):
         home_pitcher = g.get("home_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
         away_pitcher = g.get("away_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
 
-        # Calcular scores de pitchers
+        # Scores de pitchers
         home_score = pitcher_score(home_pitcher["ERA"], home_pitcher["WHIP"])
         away_score = pitcher_score(away_pitcher["ERA"], away_pitcher["WHIP"])
         score_total = home_score + away_score
-
         home_prob = round(home_score / score_total * 100)
         away_prob = round(away_score / score_total * 100)
 
-        # Determinar ganador
-        if home_prob > away_prob:
-            winner = {"team": home, "prob": home_prob}
-        else:
-            winner = {"team": away, "prob": away_prob}
-
-        # Proyección de Total
+        # Integrar odds reales si existen
+        game_key = f"{away} vs {home}"
         total_line = 8.5
+        if game_key in odds_data:
+            ml_home = odds_data[game_key]["ml_home"]
+            ml_away = odds_data[game_key]["ml_away"]
+            total_line = odds_data[game_key]["total"]
+
+            home_prob = round(home_prob * 0.6 + implied_probability(ml_home) * 0.4)
+            away_prob = round(away_prob * 0.6 + implied_probability(ml_away) * 0.4)
+
+        # Determinar ganador
+        winner = {"team": home if home_prob > away_prob else away,
+                  "prob": home_prob if home_prob > away_prob else away_prob}
+
+        # Total ALTA/BAJA
         projection = projected_runs(home_pitcher["ERA"], away_pitcher["ERA"])
         total_type = "ALTA" if projection >= total_line else "BAJA"
         total = {"line": total_line, "prob": total_confidence(projection, total_line), "type": total_type}
@@ -125,7 +179,7 @@ def analyze_games(games):
         # Hándicap
         handicap = {"line": f"{winner['team']} -1.5", "prob": runline_confidence(home_prob, away_prob)}
 
-        # Determinar mejor pick
+        # Mejor pick
         options = [
             {"type": "Ganador", "value": winner["team"], "confidence": winner["prob"]},
             {"type": f"Total {total_type}", "value": f"{total_line}", "confidence": total["prob"]},
@@ -144,7 +198,6 @@ def analyze_games(games):
         else:
             level = "🚫 PASAR"
 
-        # Guardar resultado
         analyzed.append({
             "home_team": home,
             "away_team": away,
