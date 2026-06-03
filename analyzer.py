@@ -1,8 +1,8 @@
-print("🔥 ANALYZER VERSION NUEVA")
+print("🔥 ANALYZER V4.5")
 
 def run(games):
 
-    print("🏦 SHARP MONEY V4 INSTITUTIONAL")
+    print("🏦 SHARP MONEY V4.5 INSTITUTIONAL")
 
     if not games:
         print("❌ No games found")
@@ -39,21 +39,33 @@ def run(games):
 
         edge = prob - 50
 
-        if edge < 5:
+        # FILTRO DE RUIDO
+        if prob < 57:
             continue
 
+        # NIVEL
+        if prob >= 62:
+            level = "🔥 ELITE"
+        elif prob >= 59:
+            level = "✅ STRONG"
+        else:
+            level = "⚠️ LEAN"
+
+        # LOG EN CONSOLA
         print()
         print(f"⚾ {away} vs {home}")
         print(f"🎯 Pick: {pick}")
-        print(f"📊 Prob: {round(prob,2)}%")
+        print(f"📊 Confianza: {round(prob,2)}%")
         print(f"📈 Edge: {round(edge,2)}%")
+        print(f"🏷 Nivel: {level}")
         print("----------------")
 
         report.append({
             "game": f"{away} vs {home}",
             "pick": pick,
-            "probability": round(prob, 2),
-            "edge": round(edge, 2)
+            "probability": round(prob,2),
+            "edge": round(edge,2),
+            "level": level
         })
 
     return report
