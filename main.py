@@ -1,6 +1,5 @@
-print("🔥 RAILWAY EJECUTA ESTE ARCHIVO")
 import time
-
+print("🔥 RAILWAY EJECUTA MAIN.PY")
 while True:
-    print("RUNNING")
+    print("RUNNING LOOP")
     time.sleep(5)
