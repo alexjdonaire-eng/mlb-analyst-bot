@@ -1,5 +1,4 @@
 import os
-import time
 import requests
 import collector
 import analyzer
@@ -7,10 +6,9 @@ import analyzer
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-LOCK_FILE = "bot.lock"
-
 
 def send(msg):
+
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
@@ -23,77 +21,56 @@ def send(msg):
 
 def main():
 
-    # =========================
-    # LOCK SYSTEM (ANTI OVERLAP)
-    # =========================
-    if os.path.exists(LOCK_FILE):
-        print("⛔ BOT LOCKED - previous run still active")
+    print("🏦 SHARP MONEY V5.2 CLEAN ENGINE START")
+
+    games = collector.run()
+    report = analyzer.run(games)
+
+    if not report:
+        print("❌ No picks found")
         return
 
-    open(LOCK_FILE, "w").close()
+    report = sorted(report, key=lambda x: x["probability"], reverse=True)
 
-    try:
+    top5 = report[:5]
+    parlay = [r for r in report if r["probability"] >= 59][:4]
 
-        print("🏦 SHARP MONEY V5.1 CLEAN ENGINE START")
+    message = "🏦 MLB SHARP MONEY V5.2\n\n"
 
-        games = collector.run()
-        report = analyzer.run(games)
+    message += "🔥 TOP 5 PICKS\n\n"
 
-        if not report:
-            print("❌ No picks found")
-            return
+    for i, r in enumerate(top5, start=1):
+        message += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
 
-        report = sorted(
-            report,
-            key=lambda x: x["probability"],
-            reverse=True
+    message += "\n━━━━━━━━━━━━━━\n"
+
+    for r in report:
+
+        message += (
+            f"\n⚾ {r['game']}\n"
+            f"🎯 Pick: {r['pick']}\n"
+            f"📊 Confianza: {r['probability']}%\n"
+            f"📈 Edge: {r['edge']}%\n"
+            f"📊 Steam: {r['steam']}\n"
+            f"🏷 Nivel: {r['level']}\n"
+            "━━━━━━━━━━━━━━\n"
         )
 
-        top5 = report[:5]
-        parlay = [r for r in report if r["probability"] >= 59][:4]
+    message += "\n💎 COMBINADA DEL DÍA\n\n"
 
-        message = "🏦 MLB SHARP MONEY V5.1\n\n"
+    for r in parlay:
+        message += f"✅ {r['pick']}\n"
 
-        message += "🔥 TOP 5 PICKS\n\n"
+    if top5:
+        message += (
+            f"\n🔥 Mejor Pick:\n"
+            f"{top5[0]['pick']} ({top5[0]['probability']}%)"
+        )
 
-        for i, r in enumerate(top5, start=1):
-            message += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
+    send(message)
 
-        message += "\n━━━━━━━━━━━━━━\n"
-
-        for r in report:
-
-            message += (
-                f"\n⚾ {r['game']}\n"
-                f"🎯 Pick: {r['pick']}\n"
-                f"📊 Confianza: {r['probability']}%\n"
-                f"📈 Edge: {r['edge']}%\n"
-                f"🏷 Nivel: {r['level']}\n"
-                "━━━━━━━━━━━━━━\n"
-            )
-
-        message += "\n💎 COMBINADA DEL DÍA\n\n"
-
-        for r in parlay:
-            message += f"✅ {r['pick']}\n"
-
-        if top5:
-            message += (
-                f"\n🔥 Mejor Pick:\n"
-                f"{top5[0]['pick']} ({top5[0]['probability']}%)"
-            )
-
-        send(message)
-
-        print("✅ Telegram sent")
-        print("🏁 CYCLE COMPLETE")
-
-    finally:
-        # =========================
-        # CLEAN EXIT (SIEMPRE LIMPIA LOCK)
-        # =========================
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
+    print("✅ Telegram sent")
+    print("🏁 CYCLE COMPLETE")
 
 
 if __name__ == "__main__":
