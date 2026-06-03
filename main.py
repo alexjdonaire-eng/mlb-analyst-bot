@@ -1,102 +1,68 @@
 import os
 import requests
-from analyzer import run as run_analyzer
-from collector import run as run_collector
+from analyzer import run_analyzer
 
 # =========================
-# CONFIG TELEGRAM
+# CONFIG
 # =========================
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
 # =========================
-# TELEGRAM SENDER
+# FUNCIONES
 # =========================
 def send_telegram(message: str):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-
+    """Envía un mensaje a Telegram."""
     try:
-        r = requests.post(url, data=payload, timeout=15)
-        return r.status_code
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        response = requests.post(TELEGRAM_URL, data=payload)
+        if response.status_code != 200:
+            print(f"❌ Error Telegram: {response.text}")
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
-        return None
+        print(f"❌ Excepción Telegram: {e}")
 
-# =========================
-# FORMAT GAME MESSAGE
-# =========================
-def format_game(game):
 
-    home = game.get("home_team", "TBD")
-    away = game.get("away_team", "TBD")
-
-    pick = game.get("pick", "NO BET")
-    confidence = game.get("confidence", 0)
-    edge = game.get("edge", 0)
-
-    steam = game.get("steam", "⚪ NEUTRAL")
-    market = game.get("market_move", 0)
-
-    home_p = game.get("home_pitcher", {})
-    away_p = game.get("away_pitcher", {})
-
-    score = game.get("score", 0)
-    level = game.get("level", "⚠️ LEAN")
-
-    message = (
-        f"⚾ {away} vs {home}\n\n"
-        f"🎯 Pick: {pick}\n"
-        f"📊 Confianza: {confidence:.2f}%\n"
-        f"📈 Edge: {edge:.2f}%\n"
-        f"📡 Steam: {steam}\n"
-        f"📉 Market Move: {market}\n"
-        f"🧾 Pitchers: "
-        f"{away_p.get('name','TBD')} (ERA {away_p.get('ERA','-')}, WHIP {away_p.get('WHIP','-')}) "
-        f"vs "
-        f"{home_p.get('name','TBD')} (ERA {home_p.get('ERA','-')}, WHIP {home_p.get('WHIP','-')})\n"
-        f"🧠 Score: {score}\n"
-        f"🏷 Nivel: {level}\n"
+def format_game(game: dict) -> str:
+    """Formatea la información de cada juego para Telegram."""
+    return (
+        f"⚾ {game['home_team']} vs {game['away_team']}\n\n"
+        f"🎯 Pick: {game['pick']}\n"
+        f"📊 Confianza: {game['confidence']}%\n"
+        f"📈 Edge: {game['edge']}%\n"
+        f"📡 Steam: {game['steam']}\n"
+        f"📉 Market Move: {game['market_move']}\n"
+        f"🧾 Pitchers: {game['home_pitcher']['name']} (ERA {game['home_pitcher']['ERA']}, WHIP {game['home_pitcher']['WHIP']}) "
+        f"vs {game['away_pitcher']['name']} (ERA {game['away_pitcher']['ERA']}, WHIP {game['away_pitcher']['WHIP']})\n"
+        f"🧠 Score: {game['score']}\n"
+        f"🏷 Nivel: {game['level']}\n"
         f"━━━━━━━━━━━━━━"
     )
 
-    return message
 
 # =========================
-# MAIN PIPELINE
+# MAIN
 # =========================
 def main():
-
     print("🔥 MLB SHARP MONEY V5.11 FULL PRO START")
 
-    # 1. COLLECT DATA
-    games = run_collector()
-
-    if not games:
-        print("❌ No games loaded")
-        return
-
-    # 2. ANALYZE DATA
-    results = run_analyzer(games)
+    results = run_analyzer()
 
     if not results:
         print("❌ No analysis results")
         return
 
-    # 3. SEND EACH GAME SEPARATELY
     for game in results:
         msg = format_game(game)
-        status = send_telegram(msg)
+        send_telegram(msg)
 
-        print(f"📤 Sent {game.get('away_team')} vs {game.get('home_team')} -> {status}")
+    print("🏁 CYCLE COMPLETE")
 
-    print("🏁 CYCLE COMPLETE V5.11")
 
-# =========================
 if __name__ == "__main__":
     main()
