@@ -1,45 +1,75 @@
 import os
-import asyncio
-from telegram import Bot
-from analyzer import analyze_games
 import requests
+from analyzer import analyze_games, top_picks
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-bot = Bot(token=TELEGRAM_TOKEN)
+# ---------- FETCH MLB GAMES ----------
+def fetch_mlb_games():
+    url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+    res = requests.get(url, timeout=15)
+    data = res.json()
+    games_list = []
 
-async def send_game(game):
-    """Envía un juego formateado a Telegram"""
-    msg = f"⚾ {game['away_team']} vs {game['home_team']}\n\n"
-    msg += "🧾 Lanzadores\n"
-    msg += f"{game['away_team']}: {game['away_pitcher']['name']} (ERA {game['away_pitcher']['ERA']} | WHIP {game['away_pitcher']['WHIP']})\n"
-    msg += f"{game['home_team']}: {game['home_pitcher']['name']} (ERA {game['home_pitcher']['ERA']} | WHIP {game['home_pitcher']['WHIP']})\n\n"
-    msg += f"🎯 Ganador: {game['pick']} ({game['confidence']}%)\n"
-    msg += f"⚾ Total: {game['total_label']} {game['total']} {game['total_percent']}%\n"
-    msg += f"⚾ Hándicap: {game['handicap']} {game['pick']} {game['handicap_percent']}%\n\n"
-    msg += f"📊 Confianza: {game['confidence']}%\n"
-    msg += f"🏷 Nivel: {game['level']}\n"
-    msg += f"💎 Jugada recomendada: {game['recommended']}\n"
+    for date in data.get("dates", []):
+        for g in date.get("games", []):
+            home = g["teams"]["home"]["team"]["name"]
+            away = g["teams"]["away"]["team"]["name"]
 
-    await bot.send_message(chat_id=CHAT_ID, text=msg)
+            games_list.append({
+                "home": home,
+                "away": away,
+                "winner": home,  # placeholder, luego calculas con tu modelo
+                "winner_pct": 75, # ejemplo
+                "total_value": 9.5,
+                "total_type": "Alta",
+                "total_pct": 70,
+                "handicap_value": -1.5,
+                "handicap_team": home,
+                "handicap_pct": 65
+            })
 
-async def main():
-    # Ejemplo: Obtener schedule desde MLB API
-    res = requests.get("https://statsapi.mlb.com/api/v1/schedule?sportId=1")
-    schedule = res.json()
-    report, top_picks = analyze_games(schedule)
+    return games_list
 
-    # Enviar todos los juegos
-    for game in report:
-        await send_game(game)
-        await asyncio.sleep(0.5)  # Pequeña pausa para no saturar
+# ---------- SEND TO TELEGRAM ----------
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    requests.post(url, data=data)
 
-    # Enviar Top Picks
-    top_msg = "🔥 TOP PICKS DEL DÍA\n\n"
-    for i, game in enumerate(top_picks,1):
-        top_msg += f"{i}. {game['pick']} gana ({game['confidence']}%)\n"
-    await bot.send_message(chat_id=CHAT_ID, text=top_msg)
+# ---------- MAIN ----------
+def main():
+    games = fetch_mlb_games()
+    analyzed = analyze_games(games)
+    top_winners, top_totals, top_handicaps = top_picks(analyzed)
+
+    # Mensajes compactos
+    for game in analyzed:
+        msg = f"⚾ {game['match']}\n\n"
+        msg += f"🧾 Lanzadores\n"
+        msg += f"{game['home_pitcher']['name']}: ERA {game['home_pitcher']['ERA']} | WHIP {game['home_pitcher']['WHIP']}\n"
+        msg += f"{game['away_pitcher']['name']}: ERA {game['away_pitcher']['ERA']} | WHIP {game['away_pitcher']['WHIP']}\n\n"
+        msg += f"🎯 Ganador: {game['winner']} ({game['winner_pct']}%)\n"
+        msg += f"⚾ Total: {game['total_type']} {game['total']} {game['total_pct']}%\n"
+        msg += f"⚾ Hándicap: {game['handicap']} {game['handicap_team']} {game['handicap_pct']}%\n\n"
+        msg += f"📊 Confianza: {game['confidence']}%\n"
+        msg += f"🏷 Nivel: {game['level']}\n"
+        msg += f"💎 Jugada recomendada: {game['recommended']}\n"
+        send_telegram(msg)
+
+    # Top picks separados
+    msg = "🔥 TOP PICKS DEL DÍA\n\n*Ganadores:*\n"
+    for g in top_winners:
+        msg += f"{g['winner']} gana ({g['winner_pct']}%)\n"
+    msg += "\n*Totales:*\n"
+    for g in top_totals:
+        msg += f"{g['match']} {g['total_type']} {g['total']} ({g['total_pct']}%)\n"
+    msg += "\n*Hándicaps:*\n"
+    for g in top_handicaps:
+        msg += f"{g['match']} {g['handicap']} {g['handicap_team']} ({g['handicap_pct']}%)\n"
+
+    send_telegram(msg)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
