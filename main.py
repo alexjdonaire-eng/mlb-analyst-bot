@@ -1,85 +1,78 @@
 import os
 import requests
-import collector
-import analyzer
+from analyzer import run_analyzer  # tu función que genera los picks
+from datetime import datetime
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# =========================
+# CONFIG
+# =========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# =========================
+# FUNCIONES
+# =========================
+def send_telegram(message: str):
+    """Envía un mensaje a Telegram."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    response = requests.post(url, data=payload)
+    if response.status_code != 200:
+        print(f"Error enviando Telegram: {response.text}")
+    return response
 
-def send(msg):
+def format_game(game: dict) -> str:
+    """Formatea un juego para Telegram con pitchers y stats."""
+    pitcher_home = game.get("pitcher_home", {"name":"TBD", "ERA":"-", "WHIP":"-"})
+    pitcher_away = game.get("pitcher_away", {"name":"TBD", "ERA":"-", "WHIP":"-"})
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": msg
-            },
-            timeout=20
-        )
-    except Exception as e:
-        print("❌ Telegram error:", e)
+    message = (
+        f"⚾ {game['away_team']} vs {game['home_team']}\n\n"
+        f"🎯 Pick: {game['pick']}\n"
+        f"📊 Confianza: {game['confidence']}%\n"
+        f"📈 Edge: {game['edge']}%\n"
+        f"📡 Steam: {game.get('steam','⚪ NEUTRAL')}\n"
+        f"🧾 Pitchers: {pitcher_away['name']} (ERA: {pitcher_away['ERA']}, WHIP: {pitcher_away['WHIP']}) "
+        f"vs {pitcher_home['name']} (ERA: {pitcher_home['ERA']}, WHIP: {pitcher_home['WHIP']})\n"
+        f"🧠 Score: {game.get('score','-')}\n"
+        f"🏷 Nivel: {game.get('level','⚠️ LEAN')}\n"
+        f"━━━━━━━━━━━━━━"
+    )
+    return message
 
-
+# =========================
+# MAIN
+# =========================
 def main():
+    print(f"🏦 MLB SHARP MONEY V5.7 START - {datetime.now()}")
 
-    print("🏦 SHARP MONEY V5.6 CLEAN ENGINE START")
-
-    games = collector.run()
-    report = analyzer.run(games)
-
-    print("🏁 CYCLE COMPLETE")
-
-    if not report:
-        print("❌ No report generated")
+    # Obtener los juegos procesados por analyzer
+    try:
+        games = run_analyzer()  # devuelve lista de dicts de juegos
+        print(f"📊 Games loaded: {len(games)}")
+    except Exception as e:
+        print(f"Error corriendo analyzer: {e}")
         return
 
-    # ordenar por score si existe, si no por probabilidad
-    report = sorted(report, key=lambda x: x.get("score", x["probability"]), reverse=True)
+    # Enviar cada juego por Telegram
+    for game in games:
+        try:
+            message = format_game(game)
+            send_telegram(message)
+            print(f"✅ Telegram sent: {game['away_team']} vs {game['home_team']}")
+        except Exception as e:
+            print(f"Error enviando juego {game['away_team']} vs {game['home_team']}: {e}")
 
-    # =========================
-    # ENVÍO POR JUEGO (1 MSG)
-    # =========================
-    for r in report:
-
-        message = (
-            f"⚾ {r['game']}\n\n"
-            f"🎯 Pick: {r['pick']}\n"
-            f"📊 Confianza: {r['probability']}%\n"
-            f"📈 Edge: {r['edge']}%\n"
-            f"📡 Steam: {r['steam']}\n"
-            f"🧾 Pitchers: {r.get('pitcher','TBD')}\n"
-            f"🧠 Score: {r.get('score','N/A')}\n"
-            f"🏷 Nivel: {r['level']}\n"
-            "━━━━━━━━━━━━━━"
-        )
-
-        send(message)
-
-    # =========================
-    # TOP 5 SUMMARY
-    # =========================
-    top5 = report[:5]
-
-    summary = "🏦 MLB SHARP MONEY V5.6\n\n🔥 TOP 5 PICKS\n\n"
-
-    for i, r in enumerate(top5, 1):
-        summary += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
-
-    summary += "\n💎 COMBINADA DEL DÍA\n\n"
-
-    for r in report:
-        if r["probability"] >= 59:
-            summary += f"✅ {r['pick']}\n"
-
-    if top5:
-        summary += f"\n🔥 Mejor Pick:\n{top5[0]['pick']} ({top5[0]['probability']}%)"
-
-    send(summary)
-
-    print("✅ Telegram sent")
-
+    # Top picks combinada
+    top_picks = sorted(games, key=lambda x: x['confidence'], reverse=True)[:4]
+    comb_message = "💎 COMBINADA DEL DÍA\n\n" + "\n".join([f"✅ {g['pick']}" for g in top_picks])
+    comb_message += f"\n\n🔥 Mejor Pick:\n{top_picks[0]['pick']} ({top_picks[0]['confidence']}%)"
+    send_telegram(comb_message)
+    print("🏁 Combinada enviada")
 
 if __name__ == "__main__":
     main()
