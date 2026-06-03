@@ -1,64 +1,74 @@
 import os
+import time
 import requests
-from analyzer import analyze_games, fetch_mlb_games
+from analyzer import fetch_mlb_games, analyze_games
 from tracker import save_pick, daily_report
 from grader import grade_picks
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# =========================
+# TELEGRAM
+# =========================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, data=data)
+    requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": message
+    })
 
+# =========================
+# FORMATO JUEGO
+# =========================
 def format_game(game):
-    home = game.get("home_team")
-    away = game.get("away_team")
-    home_pitcher = game.get("home_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
-    away_pitcher = game.get("away_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
+    home = game["home_team"]
+    away = game["away_team"]
 
-    winner = game.get("predicted_winner", {})
-    total = game.get("predicted_total", {})
-    handicap = game.get("predicted_handicap", {})
+    hp = game["home_pitcher"]
+    ap = game["away_pitcher"]
 
-    pick_type = game.get("top_pick_type", "Ganador")
-    pick_value = game.get("top_pick_value", winner.get("team", ""))
+    winner = game["predicted_winner"]
+    total = game["predicted_total"]
+    handicap = game["predicted_handicap"]
 
     return (
 f"⚾ {away} vs {home}\n\n"
 f"🧾 Lanzadores\n"
-f"{away}: {away_pitcher['name']} (ERA {away_pitcher['ERA']} | WHIP {away_pitcher['WHIP']})\n"
-f"{home}: {home_pitcher['name']} (ERA {home_pitcher['ERA']} | WHIP {home_pitcher['WHIP']})\n\n"
-f"🎯 Ganador: {winner.get('team', 'TBD')} ({winner.get('prob', 0)}%)\n"
-f"⚾ Total: {total.get('type','ALTA')} {total.get('line','-')} ({total.get('prob',0)}%)\n"
-f"⚾ Hándicap: {handicap.get('line','-')} ({handicap.get('prob',0)}%)\n\n"
-f"📊 Confianza: {game.get('confidence',0)}%\n"
-f"🏷 Nivel: {game.get('level','🚫 PASAR')}\n"
-f"💎 Jugada: {pick_type} → {pick_value} ({game.get('confidence',0)}%)"
+f"{away}: {ap['name']} (ERA {ap['ERA']} | WHIP {ap['WHIP']})\n"
+f"{home}: {hp['name']} (ERA {hp['ERA']} | WHIP {hp['WHIP']})\n\n"
+f"🎯 Ganador: {winner['team']} ({winner['prob']}%)\n"
+f"⚾ Total: {total['type']} {total['line']} ({total['prob']}%)\n"
+f"⚾ Hándicap: {handicap['line']} ({handicap['prob']}%)\n\n"
+f"📊 Confianza: {game['confidence']}%\n"
+f"🏷 Nivel: {game['level']}\n"
+f"💎 Pick: {game['top_pick_type']} → {game['top_pick_value']} ({game['confidence']}%)"
     )
 
+# =========================
+# MAIN
+# =========================
 def main():
-    print("📡 MIBOTMLB START")
+
+    print("📡 MIBOTMLB STARTED")
+
     games = fetch_mlb_games()
     if not games:
-        send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
+        send_telegram_message("⚠️ No hay juegos MLB hoy.")
         return
 
-    # --- Analizar juegos con Odds API ---
-    analyzed_games, top_message = analyze_games(games)
+    analyzed_games, top_msg = analyze_games(games)
 
-    # --- Enviar cada juego a Telegram ---
-    for g in analyzed_games:
-        msg = format_game(g)
-        send_telegram_message(msg)
+    # =========================
+    # ENVIAR JUEGOS
+    # =========================
+    for game in analyzed_games:
+        send_telegram_message(format_game(game))
 
-    # --- Guardar TOP 5 picks en tracker ---
-    top5 = sorted(
-        analyzed_games,
-        key=lambda x: x["confidence"],
-        reverse=True
-    )[:5]
+    # =========================
+    # GUARDAR PICKS TOP 5
+    # =========================
+    top5 = sorted(analyzed_games, key=lambda x: x["confidence"], reverse=True)[:5]
 
     for pick in top5:
         save_pick(
@@ -67,17 +77,35 @@ def main():
             pick["top_pick_value"]
         )
 
-    # --- Enviar TOP 5 a Telegram ---
-    send_telegram_message(top_message)
+    # =========================
+    # TOP 5 TELEGRAM
+    # =========================
+    send_telegram_message(top_msg)
 
-    # --- Grader automático: marca GANO o PERDIÓ ---
+    # =========================
+    # GRADER AUTOMÁTICO
+    # =========================
     try:
         grade_picks()
     except Exception as e:
         print("Grader error:", e)
 
-    # --- Enviar resumen diario a Telegram ---
-    send_telegram_message(daily_report())
+    # =========================
+    # REPORTE DIARIO
+    # =========================
+    report = daily_report()
 
+    send_telegram_message(report)
+
+# =========================
+# LOOP PARA RAILWAY FREE
+# =========================
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print("Error main:", e)
+
+        # Espera 1 hora antes de volver a ejecutar
+        time.sleep(3600)
