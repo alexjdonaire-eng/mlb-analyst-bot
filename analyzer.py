@@ -1,62 +1,77 @@
-def run_analyzer():
-    from collector import run as get_games
-    games = get_games()
+import requests
+
+def fetch_pitcher_stats(player_id):
+    if not player_id:
+        return {"ERA":"-", "WHIP":"-"}
+    try:
+        res = requests.get(f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching", timeout=15)
+        data = res.json()
+        stats = data["stats"][0]["splits"][0]["stat"]
+        return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
+    except:
+        return {"ERA":"-", "WHIP":"-"}
+
+def analyze_games(schedule_data, odds_data):
     report = []
+    seen_games = set()
 
-    def safe_float(x):
-        try:
-            return float(x)
-        except:
-            return 4.5
+    # Crear diccionario rápido de odds
+    odds_dict = {}
+    for g in odds_data:
+        key = f"{g.get('away_team')}_vs_{g.get('home_team')}"
+        odds_dict[key] = g
 
-    for g in games:
-        try:
-            home = g["home_team"]
-            away = g["away_team"]
-            hp = g["home_pitcher"]
-            ap = g["away_pitcher"]
+    for day in schedule_data.get("dates", []):
+        for game in day.get("games", []):
+            try:
+                home = game["teams"]["home"]["team"]["name"]
+                away = game["teams"]["away"]["team"]["name"]
 
-            home_era = safe_float(hp["ERA"])
-            away_era = safe_float(ap["ERA"])
-            home_whip = safe_float(hp["WHIP"])
-            away_whip = safe_float(ap["WHIP"])
+                game_id = f"{away}_vs_{home}"
+                if game_id in seen_games:
+                    continue
+                seen_games.add(game_id)
 
-            pitcher_edge = (away_era + away_whip) - (home_era + home_whip)
-            market_factor = g.get("market_move",0) * 0.25
+                hp = game["teams"]["home"].get("probablePitcher", {})
+                ap = game["teams"]["away"].get("probablePitcher", {})
 
-            score = 50 + pitcher_edge*5 + market_factor
-            score = min(max(score,40),72)
+                home_pitcher = {"name": hp.get("fullName","TBD")}
+                home_pitcher.update(fetch_pitcher_stats(hp.get("id")))
+                away_pitcher = {"name": ap.get("fullName","TBD")}
+                away_pitcher.update(fetch_pitcher_stats(ap.get("id")))
 
-            if score >= 55:
-                pick = home
-            else:
-                pick = away
+                # Lógica básica de pick y confianza
+                # Aquí puedes reemplazar con tu modelo real
+                confidence = round(40 + 30*0.5,2)  # Ejemplo: 55%
+                pick = home if confidence < 50 else away
+                total = round(7 + 2*(confidence/100),1)  # Total carreras aproximado
+                handicap = -1.5 if pick==away else 1.5
 
-            # Totales y hándicap simulados o desde Odds API
-            totals = g.get("totals", [{"point":8.5}])
-            spreads = g.get("spread", [{"point":1.5}])
+                # Nivel según confianza
+                if confidence >= 65:
+                    level = "🔥 ELITE"
+                elif confidence >= 58:
+                    level = "✅ FUERTE"
+                elif confidence >= 52:
+                    level = "⚠️ LEAN"
+                else:
+                    level = "🚫 PASAR"
 
-            confidence = round(score,2)
-            if confidence>=64:
-                level="🔥 ELITE"
-            elif confidence>=58:
-                level="✅ FUERTE"
-            else:
-                level="⚠️ LEAN"
+                recommended = pick if confidence >= 52 else "NO JUGAR"
 
-            report.append({
-                "home_team": home,
-                "away_team": away,
-                "home_pitcher": hp,
-                "away_pitcher": ap,
-                "pick": pick,
-                "totals": totals[0]["point"],
-                "handicap": spreads[0]["point"],
-                "confidence": confidence,
-                "level": level
-            })
-        except Exception as e:
-            print(f"❌ Error procesando juego: {e}")
+                report.append({
+                    "home_team": home,
+                    "away_team": away,
+                    "home_pitcher": home_pitcher,
+                    "away_pitcher": away_pitcher,
+                    "pick": pick,
+                    "confidence": confidence,
+                    "total": total,
+                    "handicap": handicap,
+                    "level": level,
+                    "recommended": recommended
+                })
+            except Exception as e:
+                continue
 
-    print(f"📊 Analyzer loaded: {len(report)} games")
     return report
