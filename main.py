@@ -1,79 +1,100 @@
 import os
-import asyncio
 import requests
 from analyzer import analyze_games
-from telegram import Bot
+from datetime import datetime
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# =========================
+# CONFIG
+# =========================
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-bot = Bot(token=TELEGRAM_TOKEN)
+URL = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
 
-MLB_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
-
-
-def fetch_mlb():
+# =========================
+# FUNCIONES
+# =========================
+def send_telegram_message(text: str):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        r = requests.get(MLB_URL, timeout=20)
-        return r.json()
-    except:
-        return {}
-
-
-def build_message(game):
-    return f"""⚾ {game['away_team']} vs {game['home_team']}
-
-🧾 Lanzadores
-{game['away_team']}: {game['away_pitcher']['name']} (ERA {game['away_pitcher']['ERA']} | WHIP {game['away_pitcher']['WHIP']})
-{game['home_team']}: {game['home_pitcher']['name']} (ERA {game['home_pitcher']['ERA']} | WHIP {game['home_pitcher']['WHIP']})
-
-🎯 Ganador: {game['pick']} ({game['confidence']}%)
-
-⚾ Total: {game['total']}
-⚾ Hándicap: {game['handicap']}
-
-📊 Confianza: {game['confidence']}%
-🏷 Nivel: {game['level']}
-💎 Jugada: {game['recommended']}
-"""
-
-
-async def send_safe(text):
-    try:
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=text
-        )
+        requests.post(url, data=payload)
     except Exception as e:
-        print("Telegram error:", e)
+        print(f"Error al enviar Telegram: {e}")
 
+def fetch_games():
+    try:
+        resp = requests.get(URL, params={"apiKey": ODDS_API_KEY})
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"Error al obtener juegos: {e}")
+        return []
 
-async def main():
-    print("🚀 MibotMLB V7.8 START")
+def format_game_message(game):
+    home = game['home_team']
+    away = game['away_team']
+    hp = game['home_pitcher']
+    ap = game['away_pitcher']
 
-    schedule = fetch_mlb()
+    winner = game['winner']
+    winner_pct = game['winner_pct']
+    total = game['total']
+    total_type = game['total_type']
+    total_pct = game['total_pct']
+    handicap = game['handicap']
+    handicap_team = game['handicap_team']
+    handicap_pct = game['handicap_pct']
+    confidence = game['confidence']
+    level = game['level']
+    recommendation = game['recommendation']
 
-    games = analyze_games(schedule)
+    msg = f"⚾ *{home} vs {away}*\n\n"
+    msg += f"🧾 *Lanzadores*\n"
+    msg += f"{home}: {hp['name']} (ERA {hp['era']} | WHIP {hp['whip']})\n"
+    msg += f"{away}: {ap['name']} (ERA {ap['era']} | WHIP {ap['whip']})\n\n"
 
-    print(f"📊 Games loaded: {len(games)}")
+    msg += f"🎯 *Ganador:* {winner} ({winner_pct}%)\n"
+    msg += f"⚾ *Total:* {total_type} {total} {total_pct}%\n"
+    msg += f"⚾ *Hándicap:* {handicap} {handicap_team} {handicap_pct}%\n\n"
 
-    # 🔥 enviar en bloques pequeños (evita timeout)
-    for game in games:
-        msg = build_message(game)
-        await send_safe(msg)
-        await asyncio.sleep(0.5)
+    msg += f"📊 *Confianza:* {confidence}%\n"
+    msg += f"🏷 *Nivel:* {level}\n"
+    msg += f"💎 *Jugada recomendada:* {recommendation}\n"
 
-    # TOP PICKS
-    top = sorted(games, key=lambda x: x["confidence"], reverse=True)[:5]
+    return msg
 
-    top_msg = "🔥 TOP PICKS DEL DÍA\n\n"
-    for i, g in enumerate(top, 1):
-        top_msg += f"{i}. {g['away_team']} vs {g['home_team']} → {g['pick']} ({g['confidence']}%)\n"
+def main():
+    games = fetch_games()
+    if not games:
+        send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
+        return
 
-    await send_safe(top_msg)
+    analyzed = analyze_games(games)
 
-    print("✅ DONE")
+    # Enviar juegos en bloques de 3
+    block = []
+    for idx, game in enumerate(analyzed, 1):
+        block.append(format_game_message(game))
+        if idx % 3 == 0 or idx == len(analyzed):
+            send_telegram_message("\n\n".join(block))
+            block = []
 
+    # Top Picks separados
+    top_winners = [f"{g['home_team']} vs {g['away_team']} → {g['winner']} ({g['winner_pct']}%)" 
+                   for g in analyzed if g['confidence'] >= 60 and g['recommendation'] != "NO JUGAR"]
+    top_totals = [f"{g['home_team']} vs {g['away_team']} → {g['total_type']} {g['total']} ({g['total_pct']}%)"
+                  for g in analyzed if g['confidence'] >= 60 and g['recommendation'] != "NO JUGAR"]
+    top_handicaps = [f"{g['home_team']} vs {g['away_team']} → {g['handicap']} {g['handicap_team']} ({g['handicap_pct']}%)"
+                     for g in analyzed if g['confidence'] >= 60 and g['recommendation'] != "NO JUGAR"]
+
+    if top_winners:
+        send_telegram_message("*🔥 TOP PICKS GANADOR*\n" + "\n".join(top_winners))
+    if top_totals:
+        send_telegram_message("*🔥 TOP PICKS TOTAL*\n" + "\n".join(top_totals))
+    if top_handicaps:
+        send_telegram_message("*🔥 TOP PICKS HÁNDICAP*\n" + "\n".join(top_handicaps))
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
