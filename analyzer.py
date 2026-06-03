@@ -1,101 +1,81 @@
-import requests
-
-def fetch_pitcher_stats(player_id):
-    if not player_id:
-        return {"ERA":"-", "WHIP":"-"}
+def safe_float(x):
     try:
-        res = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
-            timeout=15
-        )
-        data = res.json()
-        stats = data["stats"][0]["splits"][0]["stat"]
-        return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
+        return float(x)
     except:
-        return {"ERA":"-", "WHIP":"-"}
+        return 4.50
 
-def analyze_games(schedule_data, odds_data):
+
+def analyze_games(games_data):
+
     report = []
-    seen_games = set()
 
-    # Crear diccionario rápido de odds
-    odds_dict = {}
-    for g in odds_data:
-        key = f"{g.get('away_team')}_vs_{g.get('home_team')}"
-        odds_dict[key] = g
+    for g in games_data:
 
-    for day in schedule_data.get("dates", []):
-        for game in day.get("games", []):
-            try:
-                home = game["teams"]["home"]["team"]["name"]
-                away = game["teams"]["away"]["team"]["name"]
+        try:
+            home = g["home_team"]
+            away = g["away_team"]
 
-                game_id = f"{away}_vs_{home}"
-                if game_id in seen_games:
-                    continue
-                seen_games.add(game_id)
+            hp = g["home_pitcher"]
+            ap = g["away_pitcher"]
 
-                hp = game["teams"]["home"].get("probablePitcher", {})
-                ap = game["teams"]["away"].get("probablePitcher", {})
+            home_era = safe_float(hp["ERA"])
+            away_era = safe_float(ap["ERA"])
+            home_whip = safe_float(hp["WHIP"])
+            away_whip = safe_float(ap["WHIP"])
 
-                home_pitcher = {"name": hp.get("fullName","TBD")}
-                home_pitcher.update(fetch_pitcher_stats(hp.get("id")))
-                away_pitcher = {"name": ap.get("fullName","TBD")}
-                away_pitcher.update(fetch_pitcher_stats(ap.get("id")))
+            # =========================
+            # MODEL CORE V5.19
+            # =========================
+            pitcher_diff = (away_era + away_whip) - (home_era + home_whip)
 
-                # Penalizar confianza si hay pitchers desconocidos
-                confidence = round(50, 2)
-                if home_pitcher["name"] == "TBD" or away_pitcher["name"] == "TBD":
-                    confidence -= 8
+            confidence = 50 + (pitcher_diff * 7.5)
 
-                # Elegir pick según confianza
-                pick = away if confidence >= 50 else home
+            # límites realistas
+            confidence = max(40, min(confidence, 75))
 
-                # Ajustar totales de carreras según ERA combinada
-                try:
-                    home_era = float(home_pitcher["ERA"])
-                    away_era = float(away_pitcher["ERA"])
-                    combined_era = home_era + away_era
-                    if combined_era <= 5:
-                        total = 7.5
-                    elif combined_era <= 7:
-                        total = 8.5
-                    else:
-                        total = 9.5
-                except:
-                    total = 8.5  # default
+            # pick
+            pick = home if confidence < 50 else away
 
-                # Hándicap realista
-                handicap = -1.5 if pick==away else 1.5
-                if confidence < 55:
-                    recommended = "NO JUGAR"
-                else:
-                    recommended = pick
+            # totales (más realista)
+            combined_era = home_era + away_era
 
-                # Nivel según confianza
-                if confidence >= 70:
-                    level = "🔥 ELITE"
-                elif confidence >= 60:
-                    level = "✅ FUERTE"
-                elif confidence >= 55:
-                    level = "⚠️ LEAN"
-                else:
-                    level = "🚫 PASAR"
+            if combined_era <= 5.5:
+                total = 7.5
+            elif combined_era <= 7:
+                total = 8.5
+            else:
+                total = 9.5
 
-                # Construir reporte
-                report.append({
-                    "home_team": home,
-                    "away_team": away,
-                    "home_pitcher": home_pitcher,
-                    "away_pitcher": away_pitcher,
-                    "pick": pick,
-                    "confidence": confidence,
-                    "total": total,
-                    "handicap": handicap,
-                    "level": level,
-                    "recommended": recommended
-                })
-            except:
-                continue
+            # handicap
+            handicap = "-1.5" if pick == away else "+1.5"
+
+            # nivel
+            if confidence >= 70:
+                level = "🔥 ELITE"
+            elif confidence >= 62:
+                level = "✅ FUERTE"
+            elif confidence >= 55:
+                level = "⚠️ LEAN"
+            else:
+                level = "🚫 PASAR"
+
+            # jugada recomendada
+            recommended = pick if confidence >= 55 else "NO JUGAR"
+
+            report.append({
+                "home_team": home,
+                "away_team": away,
+                "home_pitcher": hp,
+                "away_pitcher": ap,
+                "pick": pick,
+                "confidence": round(confidence, 2),
+                "total": total,
+                "handicap": handicap,
+                "level": level,
+                "recommended": recommended
+            })
+
+        except:
+            continue
 
     return report
