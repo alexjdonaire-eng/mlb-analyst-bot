@@ -1,112 +1,89 @@
-import json
-import os
 import requests
-
-HISTORY_FILE = "market_history.jsonl"
+import os
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# =========================
-# CONFIG PRO
-# =========================
-MIN_PROB = 63.0
-MIN_EDGE = 10.0
-MAX_PICKS = 3
+MIN_EV = 4.0  # sharp threshold
 
-seen = set()
+def implied_prob(odds):
+    return (1 / odds) * 100
 
-# =========================
-def send(msg):
-    requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg},
-        timeout=20
-    )
+def run(games):
 
-# =========================
-def load_history():
-    rows = []
-    try:
-        with open(HISTORY_FILE, "r") as f:
-            for line in f:
-                try:
-                    rows.append(json.loads(line))
-                except:
-                    pass
-    except:
-        pass
-    return rows
+    print("🧠 ANALYZER START")
 
-# =========================
-def latest_games(history):
-    games = {}
-    for row in reversed(history):
-        key = f"{row.get('away_team')}_{row.get('home_team')}"
-        if key not in games:
-            games[key] = row
-    return list(games.values())
+    report = "🏦 SHARP MONEY BOT V3\n\n"
+    picks = 0
 
-# =========================
-def pick(game):
-    odds = game.get("odds", {})
-    if len(odds) < 2:
-        return None
+    for g in games:
 
-    winner = min(odds, key=odds.get)
-    prob = round((1 / odds[winner]) * 100, 2)
-    edge = round(prob - 50, 2)
+        odds = g["odds"]
 
-    return winner, prob, edge
-
-# =========================
-def main():
-    history = load_history()
-    games = latest_games(history)
-
-    picks = []
-
-    for game in games:
-        away = game.get("away_team")
-        home = game.get("home_team")
-
-        result = pick(game)
-        if not result:
+        if len(odds) < 2:
             continue
 
-        winner, prob, edge = result
+        # favorito por mercado
+        fav = min(odds, key=odds.get)
+        dog = max(odds, key=odds.get)
 
-        key = f"{away}_{home}_{winner}"
-        if key in seen:
+        fav_odds = odds[fav]
+        dog_odds = odds[dog]
+
+        fav_prob = implied_prob(fav_odds)
+        dog_prob = implied_prob(dog_odds)
+
+        # EV simplificado (edge del underdog o favorito subvaluado)
+        ev_fav = fav_prob - 50
+        ev_dog = dog_prob - 50
+
+        best_pick = fav
+        best_ev = ev_fav
+
+        if ev_dog > ev_fav:
+            best_pick = dog
+            best_ev = ev_dog
+
+        if best_ev < MIN_EV:
             continue
 
-        if prob < MIN_PROB:
-            continue
+        if best_ev > 10:
+            status = "🔥 SHARP"
+        elif best_ev > 6:
+            status = "⚡ VALUE"
+        else:
+            status = "📊 EDGE"
 
-        if edge < MIN_EDGE:
-            continue
-
-        seen.add(key)
-
-        picks.append(
-            f"""⚾ {away} vs {home}
-🎯 Pick: {winner}
-📊 Prob: {prob}%
-📈 Edge: {edge}%
-"""
+        report += (
+            f"⚾ {g['away']} vs {g['home']}\n"
+            f"🎯 Pick: {best_pick}\n"
+            f"📊 EV: {best_ev:.2f}%\n"
+            f"🏷 Status: {status}\n\n"
+            "----------------\n"
         )
 
-        if len(picks) >= MAX_PICKS:
-            break
+        picks += 1
 
-    if not picks:
-        print("NO VALUE PICKS")
-        return
+    if picks == 0:
+        report += "⚠️ No sharp value detected"
 
-    msg = "🏦 MLB PRO BETTING BOT V2\n\n" + "\n----------------\n".join(picks)
+    send(report)
 
-    send(msg)
-    print("SENT PICKS:", len(picks))
+    print(f"✅ PICKS SENT: {picks}")
 
-if __name__ == "__main__":
-    main()
+    return report
+
+
+def send(msg):
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": msg
+            },
+            timeout=15
+        )
+        print("📤 Telegram sent")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
