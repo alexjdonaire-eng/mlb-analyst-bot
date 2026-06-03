@@ -29,21 +29,25 @@ async def send_game(game):
 {game['recommended']}
 """
 
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    try:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    except Exception as e:
+        print(f"❌ Error sending game: {e}")
 
 
 async def main():
 
-    print("🚀 MibotMLB V5.19 START")
+    print("🚀 MibotMLB V5.19 FIX START")
 
     games = fetch_mlb_games()
     print(f"📊 Games loaded: {len(games)}")
 
     report = analyze_games(games)
 
-    # enviar todos
-    tasks = [send_game(g) for g in report]
-    await asyncio.gather(*tasks)
+    # 🔥 IMPORTANTE: enviar UNO POR UNO (NO gather)
+    for game in report:
+        await send_game(game)
+        await asyncio.sleep(1.2)  # evita saturación Telegram
 
     # TOP 5
     top = sorted(report, key=lambda x: x["confidence"], reverse=True)[:5]
@@ -54,7 +58,7 @@ async def main():
 
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=top_msg)
 
-    print("✅ Enviado todo correctamente")
+    print("✅ Envío completo sin errores")
 
 
 if __name__ == "__main__":
