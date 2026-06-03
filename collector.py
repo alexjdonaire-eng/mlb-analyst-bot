@@ -24,7 +24,7 @@ def save_memory(data):
 
 def run():
 
-    print("📡 COLLECTOR V5 START")
+    print("📡 COLLECTOR V5.2 STEAM ENGINE START")
 
     r = requests.get(
         ODDS_URL,
@@ -55,11 +55,6 @@ def run():
 
             key = f"{away}vs{home}"
 
-            current_snapshot = {
-                "odds": odds,
-                "time": datetime.utcnow().isoformat()
-            }
-
             previous = memory.get(key)
 
             movement = 0
@@ -70,18 +65,29 @@ def run():
 
                 for team in odds:
                     if team in old_odds:
-                        movement += old_odds[team] - odds[team]
 
-            memory[key] = current_snapshot
+                        old = old_odds[team]
+                        new = odds[team]
+
+                        # 🔥 cambio relativo real
+                        change = (old - new) / old
+                        movement += change
+
+            steam_score = movement * 100
+
+            memory[key] = {
+                "odds": odds,
+                "time": datetime.utcnow().isoformat()
+            }
 
             games.append({
                 "home": home,
                 "away": away,
                 "odds": odds,
-                "movement": movement
+                "movement": steam_score
             })
 
-        except Exception as e:
+        except Exception:
             continue
 
     save_memory(memory)
