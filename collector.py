@@ -12,6 +12,10 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 HISTORY_FILE = "market_history.jsonl"
 
 
+# =========================
+# TELEGRAM
+# =========================
+
 def send_telegram(msg):
     try:
         requests.post(
@@ -23,7 +27,12 @@ def send_telegram(msg):
         pass
 
 
+# =========================
+# ODDS API
+# =========================
+
 def get_odds():
+
     r = requests.get(
         ODDS_URL,
         params={
@@ -36,26 +45,38 @@ def get_odds():
     )
 
     if r.status_code != 200:
+        print("API ERROR:", r.status_code)
         return []
 
     return r.json()
 
 
-def load_last_snapshot():
+# =========================
+# SAVE SNAPSHOT
+# =========================
+
+def save_snapshot(snapshot):
+
+    with open(HISTORY_FILE, "a") as f:
+        f.write(json.dumps(snapshot) + "\n")
+
+
+# =========================
+# COUNT SNAPSHOTS
+# =========================
+
+def count_snapshots():
+
     try:
         with open(HISTORY_FILE, "r") as f:
-            lines = f.readlines()
-            if not lines:
-                return {}
-            return json.loads(lines[-1])
+            return sum(1 for _ in f)
     except:
-        return {}
+        return 0
 
 
-def save_snapshot(data):
-    with open(HISTORY_FILE, "a") as f:
-        f.write(json.dumps(data) + "\n")
-
+# =========================
+# MAIN
+# =========================
 
 def main():
 
@@ -63,46 +84,49 @@ def main():
 
     odds = get_odds()
 
-    last_snapshot = load_last_snapshot()
-    last_ids = set(last_snapshot.keys())
-
-    current_snapshot = {}
-
     saved = 0
 
     for game in odds:
 
-        if not game.get("bookmakers"):
-            continue
+        try:
 
-        book = game["bookmakers"][0]
-        if not book.get("markets"):
-            continue
+            if not game.get("bookmakers"):
+                continue
 
-        game_id = game["id"]
+            book = game["bookmakers"][0]
 
-        snapshot = {
-            "time": datetime.now(UTC).isoformat(),
-            "game_id": game_id,
-            "home_team": game["home_team"],
-            "away_team": game["away_team"],
-            "odds": {}
-        }
+            if not book.get("markets"):
+                continue
 
-        for o in book["markets"][0]["outcomes"]:
-            snapshot["odds"][o["name"]] = o["price"]
+            snapshot = {
+                "time": datetime.now(UTC).isoformat(),
+                "game_id": game["id"],
+                "home_team": game["home_team"],
+                "away_team": game["away_team"],
+                "odds": {}
+            }
 
-        # SOLO guardar si cambió o es nuevo
-        if game_id not in last_ids:
+            for outcome in book["markets"][0]["outcomes"]:
+                snapshot["odds"][outcome["name"]] = outcome["price"]
+
             save_snapshot(snapshot)
+
             saved += 1
 
-        current_snapshot[game_id] = snapshot
+        except Exception as e:
+            print("GAME ERROR:", e)
+
+    total_snapshots = count_snapshots()
 
     send_telegram(
-        f"✅ COLLECTOR RUN\n\nNew snapshots: {saved}\nGames found: {len(odds)}"
+        f"✅ COLLECTOR RUN\n\n"
+        f"New snapshots: {saved}\n"
+        f"Games found: {len(odds)}\n"
+        f"History size: {total_snapshots}"
     )
 
+    print("NEW SNAPSHOTS:", saved)
+    print("TOTAL SNAPSHOTS:", total_snapshots)
     print("FINISHED")
 
 
