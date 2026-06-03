@@ -1,63 +1,88 @@
-def analyze_games(games):
+import requests
 
+def fetch_pitcher_stats(player_id):
+    if not player_id:
+        return {"ERA":"-", "WHIP":"-"}
+    try:
+        res = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
+            timeout=15
+        )
+        data = res.json()
+        stats = data["stats"][0]["splits"][0]["stat"]
+        return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
+    except:
+        return {"ERA":"-", "WHIP":"-"}
+
+def analyze_games(schedule_data):
     report = []
+    seen_games = set()
 
-    def f(x):
-        try:
-            return float(x)
-        except:
-            return 4.5
+    for day in schedule_data.get("dates", []):
+        for game in day.get("games", []):
+            try:
+                home = game["teams"]["home"]["team"]["name"]
+                away = game["teams"]["away"]["team"]["name"]
+                game_id = f"{away}_vs_{home}"
+                if game_id in seen_games:
+                    continue
+                seen_games.add(game_id)
 
-    for g in games:
+                hp = game["teams"]["home"].get("probablePitcher", {})
+                ap = game["teams"]["away"].get("probablePitcher", {})
 
-        home = g["home_team"]
-        away = g["away_team"]
+                home_pitcher = {"name": hp.get("fullName","TBD")}
+                home_pitcher.update(fetch_pitcher_stats(hp.get("id")))
 
-        hp = g["home_pitcher"]
-        ap = g["away_pitcher"]
+                away_pitcher = {"name": ap.get("fullName","TBD")}
+                away_pitcher.update(fetch_pitcher_stats(ap.get("id")))
 
-        home_score = f(hp["ERA"]) + f(hp["WHIP"])
-        away_score = f(ap["ERA"]) + f(ap["WHIP"])
+                # Confianza base
+                confidence = 50
+                if home_pitcher["name"]=="TBD" or away_pitcher["name"]=="TBD":
+                    confidence -= 8
 
-        diff = away_score - home_score
+                # Elegir ganador
+                pick = away if confidence >= 50 else home
 
-        confidence = 50 + diff * 7.5
-        confidence = round(max(35, min(confidence, 80)), 2)
+                # Ajustar total de carreras
+                try:
+                    home_era = float(home_pitcher["ERA"])
+                    away_era = float(away_pitcher["ERA"])
+                    combined_era = home_era + away_era
+                    total = 7.5 if combined_era <= 5 else (8.5 if combined_era <=7 else 9.5)
+                except:
+                    total = 8.5
 
-        pick = away if confidence >= 50 else home
+                # Hándicap
+                handicap = -1.5 if pick==away else 1.5
 
-        total = 8.5
-        if home_score + away_score > 9:
-            total = 9.5
-        elif home_score + away_score < 6:
-            total = 7.5
+                # Jugada recomendada
+                recommended = pick if confidence >= 55 else "NO JUGAR"
 
-        handicap = "-1.5" if pick == away else "+1.5"
+                # Nivel
+                if confidence >= 70:
+                    level = "🔥 ELITE"
+                elif confidence >= 60:
+                    level = "✅ FUERTE"
+                elif confidence >= 55:
+                    level = "⚠️ LEAN"
+                else:
+                    level = "🚫 PASAR"
 
-        # NIVEL SYSTEM PRO
-        if confidence >= 72:
-            level = "🔥 ELITE"
-        elif confidence >= 62:
-            level = "✅ FUERTE"
-        elif confidence >= 52:
-            level = "⚠️ LEAN"
-        else:
-            level = "🚫 PASAR"
-
-        # no eliminar juegos, TODOS entran
-        report.append({
-            "home_team": home,
-            "away_team": away,
-            "home_pitcher": hp,
-            "away_pitcher": ap,
-            "pick": pick,
-            "confidence": confidence,
-            "total": total,
-            "handicap": handicap,
-            "level": level
-        })
-
-    # orden por mejor valor
-    report = sorted(report, key=lambda x: x["confidence"], reverse=True)
+                report.append({
+                    "home_team": home,
+                    "away_team": away,
+                    "home_pitcher": home_pitcher,
+                    "away_pitcher": away_pitcher,
+                    "pick": pick,
+                    "confidence": confidence,
+                    "total": total,
+                    "handicap": handicap,
+                    "level": level,
+                    "recommended": recommended
+                })
+            except:
+                continue
 
     return report
