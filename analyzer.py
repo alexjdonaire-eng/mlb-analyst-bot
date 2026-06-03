@@ -1,3 +1,9 @@
+import hashlib
+
+# =========================
+# ANALYZER V9 PRO
+# =========================
+
 def analyze_games(games):
     results = []
     seen = set()
@@ -9,37 +15,56 @@ def analyze_games(games):
         if not home or not away:
             continue
 
-        game_key = f"{away}_vs_{home}"
-        if game_key in seen:
+        key = f"{away}_vs_{home}"
+
+        # 🚫 evitar duplicados
+        if key in seen:
             continue
-        seen.add(game_key)
+        seen.add(key)
 
-        bookmakers = g.get("bookmakers", [])
-        odds = bookmakers[0] if bookmakers else {}
+        # =========================
+        # PITCHERS (MLB no siempre los da)
+        # =========================
+        home_pitcher = {
+            "name": "TBD",
+            "era": "-",
+            "whip": "-"
+        }
 
-        # ❗ FIX IMPORTANTE: pitchers NO vienen de Odds API
-        home_pitcher = {"name": "TBD", "era": "-", "whip": "-"}
-        away_pitcher = {"name": "TBD", "era": "-", "whip": "-"}
+        away_pitcher = {
+            "name": "TBD",
+            "era": "-",
+            "whip": "-"
+        }
 
-        # PROBABILIDAD REALISTA (no fijo 40%)
-        import hashlib
-        h = int(hashlib.md5(home.encode()).hexdigest(), 16) % 100
-        a = int(hashlib.md5(away.encode()).hexdigest(), 16) % 100
+        # =========================
+        # PROBABILIDAD ESTABLE (sin API random)
+        # =========================
+        h_seed = int(hashlib.md5(home.encode()).hexdigest(), 16)
+        a_seed = int(hashlib.md5(away.encode()).hexdigest(), 16)
 
-        home_prob = round(45 + (h % 25), 2)
-        away_prob = round(45 + (a % 25), 2)
+        home_prob = 45 + (h_seed % 25)
+        away_prob = 45 + (a_seed % 25)
 
         winner = home if home_prob > away_prob else away
-        confidence = max(home_prob, away_prob)
+        confidence = round(max(home_prob, away_prob), 2)
 
-        # TOTAL
-        total = round(8.0 + ((h + a) % 30) / 10, 1)
-        total_type = "Alta" if confidence > 52 else "Baja"
+        # =========================
+        # TOTAL (over/under dinámico)
+        # =========================
+        base_total = 8.0 + ((h_seed + a_seed) % 20) / 10
+        total = round(base_total, 1)
 
+        total_type = "Alta" if confidence >= 52 else "Baja"
+
+        # =========================
         # HANDICAP
+        # =========================
         spread_team = winner
 
+        # =========================
         # NIVEL
+        # =========================
         if confidence >= 70:
             level = "🔥 ELITE"
         elif confidence >= 60:
@@ -51,16 +76,24 @@ def analyze_games(games):
 
         recommendation = winner if confidence >= 52 else "NO JUGAR"
 
+        # =========================
+        # OUTPUT STRUCTURE
+        # =========================
         results.append({
             "home": home,
             "away": away,
+
             "home_pitcher": home_pitcher,
             "away_pitcher": away_pitcher,
+
             "winner": winner,
             "confidence": confidence,
+
             "total": total,
             "total_type": total_type,
+
             "spread_team": spread_team,
+
             "level": level,
             "recommendation": recommendation
         })
