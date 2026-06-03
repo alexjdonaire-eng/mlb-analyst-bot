@@ -3,25 +3,26 @@ def analyze_games(games):
     for g in games:
         home = g.get("home_team", "TBD")
         away = g.get("away_team", "TBD")
-        home_pitcher = g.get("home_pitcher", {"name": "TBD", "era": "-", "whip": "-"})
-        away_pitcher = g.get("away_pitcher", {"name": "TBD", "era": "-", "whip": "-"})
-        
-        # Simulación de predicciones (para reemplazar por tu lógica)
-        winner = {"team": home, "prob": 55}  # ejemplo
+        home_pitcher = g.get("home_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
+        away_pitcher = g.get("away_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
+
+        # Simulación de predicciones (reemplazar con tu modelo)
+        winner = {"team": home, "prob": 55}
         total = {"line": 8.5, "prob": 60, "type": "Alta"}
         handicap = {"line": f"{home} -1.5", "prob": 58}
-        
-        # Determinar mejor pick del juego según probabilidad
+
+        # Determinar mejor pick
         picks = [
             {"type": "Ganador", "value": winner["team"], "prob": winner["prob"]},
-            {"type": "Total Alta" if total["type"]=="Alta" else "Total Baja", "value": f"{total['line']}", "prob": total["prob"]},
+            {"type": "Total Alta" if total["type"] == "Alta" else "Total Baja",
+             "value": f"{total['line']}", "prob": total["prob"]},
             {"type": "Hándicap", "value": handicap["line"], "prob": handicap["prob"]}
         ]
         best_pick = max(picks, key=lambda x: x["prob"])
-        
+
         level = "✅ FUERTE" if best_pick["prob"] >= 65 else ("⚠️ LEAN" if best_pick["prob"] >= 50 else "🚫 PASAR")
         confidence = best_pick["prob"]
-        
+
         analyzed.append({
             "home": home,
             "away": away,
