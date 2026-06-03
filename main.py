@@ -1,26 +1,13 @@
-import time
-import os
+import collector
+import analyzer
 
-from collector import main as run_collector
-from analyzer import main as run_analyzer
+def main():
+    print("🚀 SHARP MONEY BOT V3 START")
 
-print("🔥 BOT PRO V2 STARTED")
+    games = collector.run()
+    report = analyzer.run(games)
 
-while True:
-    try:
-        print("\n====================")
-        print("🚀 NEW CYCLE")
-        print("====================")
+    print("🏁 CYCLE FINISHED")
 
-        print("📡 Collector...")
-        run_collector()
-
-        print("🧠 Analyzer...")
-        run_analyzer()
-
-        print("⏳ Sleeping 60s...")
-        time.sleep(60)
-
-    except Exception as e:
-        print("❌ ERROR:", e)
-        time.sleep(10)
+if __name__ == "__main__":
+    main()
