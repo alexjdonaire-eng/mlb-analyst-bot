@@ -1,112 +1,88 @@
 import requests
+import time
 
+# ---------- FETCH PITCHER STATS ----------
 def fetch_pitcher_stats(player_id):
-    """Obtiene estadísticas de lanzador desde MLB Stats API."""
     if not player_id:
-        return {"ERA":"-", "WHIP":"-"}
+        return {"ERA": "-", "WHIP": "-"}
     try:
-        res = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
-            timeout=15
-        )
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching"
+        res = requests.get(url, timeout=15)
         data = res.json()
-        stats = data["stats"][0]["splits"][0]["stat"]
-        return {"ERA": stats.get("era","-"), "WHIP": stats.get("whip","-")}
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return {"ERA": "-", "WHIP": "-"}
+        stat = splits[0].get("stat", {})
+        return {"ERA": stat.get("era", "-"), "WHIP": stat.get("whip", "-")}
     except:
-        return {"ERA":"-", "WHIP":"-"}
+        return {"ERA": "-", "WHIP": "-"}
 
-def analyze_games(schedule_data):
-    """Analiza todos los juegos del día y devuelve reporte completo para Telegram."""
-    report = []
-    seen_games = set()
+# ---------- ANALYZE GAMES ----------
+def analyze_games(games):
+    analyzed = []
 
-    for day in schedule_data.get("dates", []):
-        for game in day.get("games", []):
-            try:
-                home = game["teams"]["home"]["team"]["name"]
-                away = game["teams"]["away"]["team"]["name"]
+    for game in games:
+        # Pitchers reales con fallback
+        hp = game["teams"]["home"].get("probablePitcher") or {}
+        ap = game["teams"]["away"].get("probablePitcher") or {}
 
-                game_id = f"{away}_vs_{home}"
-                if game_id in seen_games:
-                    continue
-                seen_games.add(game_id)
+        home_id = hp.get("id")
+        away_id = ap.get("id")
 
-                hp = game["teams"]["home"].get("probablePitcher", {})
-                ap = game["teams"]["away"].get("probablePitcher", {})
+        home_pitcher = {"name": hp.get("fullName", "TBD")}
+        home_pitcher.update(fetch_pitcher_stats(home_id))
+        time.sleep(0.2)
 
-                home_pitcher = {"name": hp.get("fullName","TBD")}
-                home_pitcher.update(fetch_pitcher_stats(hp.get("id")))
-                away_pitcher = {"name": ap.get("fullName","TBD")}
-                away_pitcher.update(fetch_pitcher_stats(ap.get("id")))
+        away_pitcher = {"name": ap.get("fullName", "TBD")}
+        away_pitcher.update(fetch_pitcher_stats(away_id))
+        time.sleep(0.2)
 
-                # Confianza base
-                confidence = 50.0
-                if home_pitcher["name"] == "TBD" or away_pitcher["name"] == "TBD":
-                    confidence -= 10
+        # Confianza simulada por ejemplo
+        confidence = max(game.get("winner_pct", 0), game.get("total_pct",0), game.get("handicap_pct",0))
 
-                # Ajustar por ERA combinada
-                try:
-                    home_era = float(home_pitcher["ERA"])
-                    away_era = float(away_pitcher["ERA"])
-                    combined_era = home_era + away_era
+        # Determinar nivel
+        if confidence >= 70:
+            level = "ELITE 🔥"
+        elif confidence >= 60:
+            level = "FUERTE ✅"
+        elif confidence >= 50:
+            level = "LEAN ⚠️"
+        else:
+            level = "PASAR 🚫"
 
-                    if combined_era <= 5:
-                        total = 7.5
-                    elif combined_era <= 7:
-                        total = 8.5
-                    else:
-                        total = 9.5
+        # Determinar jugada recomendada
+        if confidence >= 60:
+            recommended = f"{game.get('winner','?')} gana"
+        else:
+            recommended = "NO JUGAR"
 
-                    # Aumentar confianza si lanzadores muy buenos
-                    if home_era < 3 and away_era < 3:
-                        confidence += 15
-                    elif home_era < 4 and away_era < 4:
-                        confidence += 10
-                except:
-                    total = 8.5
+        analyzed.append({
+            "match": f"{game['home']} vs {game['away']}",
+            "home_pitcher": home_pitcher,
+            "away_pitcher": away_pitcher,
+            "winner": game.get("winner","?"),
+            "winner_pct": game.get("winner_pct", 0),
+            "total": game.get("total_value", 0),
+            "total_type": game.get("total_type","Alta/Baja"),
+            "total_pct": game.get("total_pct",0),
+            "handicap": game.get("handicap_value",0),
+            "handicap_team": game.get("handicap_team",""),
+            "handicap_pct": game.get("handicap_pct",0),
+            "confidence": round(confidence,2),
+            "level": level,
+            "recommended": recommended
+        })
 
-                # Determinar pick
-                pick = away if confidence >= 55 else home
+    return analyzed
 
-                # Hándicap automático
-                handicap = -1.5 if pick==away else 1.5
+# ---------- TOP PICKS ----------
+def top_picks(analyzed):
+    winners = sorted(analyzed, key=lambda x: x["winner_pct"], reverse=True)
+    totals = sorted(analyzed, key=lambda x: x["total_pct"], reverse=True)
+    handicaps = sorted(analyzed, key=lambda x: x["handicap_pct"], reverse=True)
 
-                # Nivel
-                if confidence >= 70:
-                    level = "🔥 ELITE"
-                elif confidence >= 60:
-                    level = "✅ FUERTE"
-                elif confidence >= 55:
-                    level = "⚠️ LEAN"
-                else:
-                    level = "🚫 PASAR"
+    top5_winners = winners[:5]
+    top5_totals = totals[:5]
+    top5_handicaps = handicaps[:5]
 
-                # Jugada recomendada
-                recommended = pick if confidence >= 55 else "NO JUGAR"
-
-                # Total Alta/Baja y porcentaje
-                total_label = "Alta" if pick==away else "Baja"
-                total_percent = round(confidence, 2)
-
-                report.append({
-                    "home_team": home,
-                    "away_team": away,
-                    "home_pitcher": home_pitcher,
-                    "away_pitcher": away_pitcher,
-                    "pick": pick,
-                    "confidence": round(confidence,2),
-                    "total": total,
-                    "total_label": total_label,
-                    "total_percent": total_percent,
-                    "handicap": handicap,
-                    "handicap_percent": total_percent,
-                    "level": level,
-                    "recommended": recommended
-                })
-            except:
-                continue
-
-    # Ordenar Top Picks
-    top_picks = sorted(report, key=lambda x: x["confidence"], reverse=True)[:5]
-
-    return report, top_picks
+    return top5_winners, top5_totals, top5_handicaps
