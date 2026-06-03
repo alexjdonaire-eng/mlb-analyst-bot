@@ -1,40 +1,63 @@
-def run(games):
+def run_analyzer():
+
+    print("🏦 SHARP MONEY V5.10 ANALYZER START")
+
+    # =========================
+    # IMPORTANTE:
+    # Este analyzer espera que el collector ya traiga:
+    # - home_team
+    # - away_team
+    # - pitcher_home
+    # - pitcher_away
+    # - movement
+    # - steam
+    # =========================
+
+    try:
+        from collector import run as get_games
+        games = get_games()
+    except Exception as e:
+        print(f"❌ Collector error: {e}")
+        return []
 
     report = []
-
-    print("🏦 SHARP MONEY V5.9 ANALYZER START")
 
     for g in games:
 
         try:
-            away = g["away_team"]
-            home = g["home_team"]
+            home = g.get("home_team")
+            away = g.get("away_team")
 
             # =========================
             # PITCHERS
             # =========================
-            home_p = g["pitcher_home"]
-            away_p = g["pitcher_away"]
+            hp = g.get("pitcher_home", {"name":"TBD","ERA":"-","WHIP":"-"})
+            ap = g.get("pitcher_away", {"name":"TBD","ERA":"-","WHIP":"-"})
 
-            home_era = float(home_p["ERA"]) if home_p["ERA"] != "-" else 4.50
-            away_era = float(away_p["ERA"]) if away_p["ERA"] != "-" else 4.50
+            def safe_float(x):
+                try:
+                    return float(x)
+                except:
+                    return 4.50
 
-            home_whip = float(home_p["WHIP"]) if home_p["WHIP"] != "-" else 1.30
-            away_whip = float(away_p["WHIP"]) if away_p["WHIP"] != "-" else 1.30
+            home_era = safe_float(hp["ERA"])
+            away_era = safe_float(ap["ERA"])
+            home_whip = safe_float(hp["WHIP"])
+            away_whip = safe_float(ap["WHIP"])
 
             # =========================
-            # MARKET MOVEMENT
+            # MARKET
             # =========================
             movement = g.get("movement", 0)
 
             # =========================
-            # BASE MODEL (simple but effective)
+            # MODEL CORE V5.10
             # =========================
-            pitcher_adv = (away_era + away_whip) - (home_era + home_whip)
+            pitcher_diff = (away_era + away_whip) - (home_era + home_whip)
 
-            market_bias = -movement * 0.3
+            market_factor = -movement * 0.35
 
-            score = 50 + (pitcher_adv * 6) + market_bias
+            score = 50 + (pitcher_diff * 6.5) + market_factor
 
             # =========================
             # PICK LOGIC
@@ -44,19 +67,15 @@ def run(games):
             else:
                 pick = away
 
-            # =========================
-            # PROBABILITY (soft sigmoid style)
-            # =========================
-            probability = round(min(max(score, 45), 75), 2)
-
-            edge = round(abs(score - 50), 2)
+            confidence = max(45, min(score, 75))
+            edge = abs(score - 50)
 
             # =========================
-            # LEVEL
+            # LEVEL SYSTEM
             # =========================
-            if probability >= 64:
+            if confidence >= 64:
                 level = "🔥 ELITE"
-            elif probability >= 58:
+            elif confidence >= 58:
                 level = "✅ STRONG"
             else:
                 level = "⚠️ LEAN"
@@ -67,29 +86,26 @@ def run(games):
             steam = g.get("steam", "⚪ NEUTRAL")
 
             # =========================
-            # BUILD REPORT ITEM
+            # OUTPUT OBJECT
             # =========================
             report.append({
-                "game": g["game"],
+                "home_team": home,
+                "away_team": away,
                 "pick": pick,
-                "probability": probability,
-                "edge": edge,
-                "level": level,
+                "confidence": round(confidence, 2),
+                "edge": round(edge, 2),
                 "steam": steam,
-                "movement": movement,
+                "market_move": movement,
+                "score": round(score, 2),
+                "level": level,
 
-                "pitcher": (
-                    f"{home_p['name']} (ERA {home_p['ERA']}, WHIP {home_p['WHIP']})"
-                    f" vs "
-                    f"{away_p['name']} (ERA {away_p['ERA']}, WHIP {away_p['WHIP']})"
-                ),
-
-                "score": round(score, 2)
+                "home_pitcher": hp,
+                "away_pitcher": ap
             })
 
         except Exception as e:
-            print("❌ Game error:", e)
+            print(f"❌ Game error: {e}")
 
-    print("📊 Games loaded:", len(report))
+    print(f"📊 Games loaded: {len(report)}")
 
     return report
