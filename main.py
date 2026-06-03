@@ -4,61 +4,49 @@ from collector import fetch_mlb_games
 from analyzer import analyze_games
 from telegram import Bot
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-bot = Bot(token=TELEGRAM_TOKEN)
+bot = Bot(token=TOKEN)
 
 
 async def send_game(game):
 
-    message = f"""⚾ {game['away_team']} vs {game['home_team']}
+    # 🔥 MENSAJE CORTO OPTIMIZADO
+    msg = (
+        f"⚾ {game['away_team']} vs {game['home_team']}\n"
+        f"🎯 {game['pick']}\n"
+        f"📊 {game['confidence']}% | ⚾ {game['total']} | {game['handicap']}\n"
+        f"🏷 {game['level']}"
+    )
 
-🧾 Lanzadores
-{game['away_team']}: {game['away_pitcher']['name']} (ERA {game['away_pitcher']['ERA']} | WHIP {game['away_pitcher']['WHIP']})
-{game['home_team']}: {game['home_pitcher']['name']} (ERA {game['home_pitcher']['ERA']} | WHIP {game['home_pitcher']['WHIP']})
-
-🎯 Ganador: {game['pick']}
-⚾ Total: {game['total']}
-⚾ Hándicap: {game['handicap']}
-
-📊 Confianza: {game['confidence']}%
-🏷 Nivel: {game['level']}
-
-💎 Jugada recomendada:
-{game['recommended']}
-"""
-
-    try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-    except Exception as e:
-        print(f"❌ Error sending game: {e}")
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 
 async def main():
 
-    print("🚀 MibotMLB V5.19 FIX START")
+    print("🚀 MibotMLB V6 START")
 
     games = fetch_mlb_games()
-    print(f"📊 Games loaded: {len(games)}")
-
     report = analyze_games(games)
 
-    # 🔥 IMPORTANTE: enviar UNO POR UNO (NO gather)
-    for game in report:
-        await send_game(game)
-        await asyncio.sleep(1.2)  # evita saturación Telegram
+    print(f"📊 VALUE PICKS: {len(report)}")
 
-    # TOP 5
+    # enviar uno por uno (estable)
+    for g in report:
+        await send_game(g)
+        await asyncio.sleep(1)
+
+    # TOP 5 limpio
     top = sorted(report, key=lambda x: x["confidence"], reverse=True)[:5]
 
-    top_msg = "🔥 TOP 5 DEL DÍA\n\n"
+    top_msg = "🔥 TOP 5\n\n"
     for i, g in enumerate(top, 1):
-        top_msg += f"{i}️⃣ {g['pick']} ({g['confidence']}%)\n"
+        top_msg += f"{i}. {g['pick']} ({g['confidence']}%)\n"
 
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=top_msg)
+    await bot.send_message(chat_id=CHAT_ID, text=top_msg)
 
-    print("✅ Envío completo sin errores")
+    print("✅ V6 COMPLETO")
 
 
 if __name__ == "__main__":
