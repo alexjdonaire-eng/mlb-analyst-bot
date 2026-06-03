@@ -1,5 +1,4 @@
 import time
 print("🔥 RAILWAY EJECUTA MAIN.PY")
 while True:
-    print("RUNNING LOOP")
-    time.sleep(5)
+    time.sleep(5)  # Mantiene el contenedor vivo
