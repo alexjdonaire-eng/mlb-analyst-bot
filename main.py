@@ -1,1 +1,6 @@
-print("✅ ESTE MAIN.PY ES EL QUE RAILWAY ESTÁ EJECUTANDO")
+print("🔥 RAILWAY EJECUTA ESTE ARCHIVO")
+import time
+
+while True:
+    print("RUNNING")
+    time.sleep(5)
