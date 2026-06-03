@@ -1,6 +1,7 @@
-print("🚀 RAILWAY EJECUTANDO MAIN")
+from collector import main as collector_main
+from analyzer import main as analyzer_main
 
-import time
-while True:
-    print("RUNNING...")
-    time.sleep(5)
+if __name__ == "__main__":
+    print("🚀 BOT STARTED")
+    collector_main()
+    analyzer_main()
