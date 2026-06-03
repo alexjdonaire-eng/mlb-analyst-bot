@@ -8,7 +8,6 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def send(msg):
-
     requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
@@ -21,7 +20,7 @@ def send(msg):
 
 def main():
 
-    print("🏦 SHARP MONEY V5.2 CLEAN ENGINE START")
+    print("🏦 SHARP MONEY V5.3 CLEAN OUTPUT START")
 
     games = collector.run()
     report = analyzer.run(games)
@@ -30,44 +29,46 @@ def main():
         print("❌ No picks found")
         return
 
+    # ordenar por probabilidad
     report = sorted(report, key=lambda x: x["probability"], reverse=True)
 
     top5 = report[:5]
-    parlay = [r for r in report if r["probability"] >= 59][:4]
 
-    message = "🏦 MLB SHARP MONEY V5.2\n\n"
+    print("📡 Sending individual game messages...")
 
-    message += "🔥 TOP 5 PICKS\n\n"
-
-    for i, r in enumerate(top5, start=1):
-        message += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
-
-    message += "\n━━━━━━━━━━━━━━\n"
-
+    # =========================
+    # 1 GAME = 1 MESSAGE
+    # =========================
     for r in report:
 
-        message += (
-            f"\n⚾ {r['game']}\n"
+        message = (
+            f"⚾ {r['game']}\n\n"
             f"🎯 Pick: {r['pick']}\n"
             f"📊 Confianza: {r['probability']}%\n"
             f"📈 Edge: {r['edge']}%\n"
             f"📊 Steam: {r['steam']}\n"
-            f"🏷 Nivel: {r['level']}\n"
-            "━━━━━━━━━━━━━━\n"
+            f"🏷 Nivel: {r['level']}"
         )
 
-    message += "\n💎 COMBINADA DEL DÍA\n\n"
+        send(message)
 
-    for r in parlay:
-        message += f"✅ {r['pick']}\n"
+    # =========================
+    # TOP 5 SUMMARY
+    # =========================
+    summary = "🏦 MLB SHARP MONEY V5.3\n\n🔥 TOP 5 PICKS\n\n"
 
-    if top5:
-        message += (
-            f"\n🔥 Mejor Pick:\n"
-            f"{top5[0]['pick']} ({top5[0]['probability']}%)"
-        )
+    for i, r in enumerate(top5, start=1):
+        summary += f"{i}️⃣ {r['pick']} ({r['probability']}%)\n"
 
-    send(message)
+    summary += "\n💎 COMBINADA DEL DÍA\n\n"
+
+    for r in report:
+        if r["probability"] >= 59:
+            summary += f"✅ {r['pick']}\n"
+
+    summary += f"\n🔥 Mejor Pick:\n{top5[0]['pick']} ({top5[0]['probability']}%)"
+
+    send(summary)
 
     print("✅ Telegram sent")
     print("🏁 CYCLE COMPLETE")
