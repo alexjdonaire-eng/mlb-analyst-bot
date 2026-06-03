@@ -1,11 +1,62 @@
 import requests
 
+MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher,team"
+
 # ===========================================
 # FUNCIONES DE APOYO
 # ===========================================
 
+def fetch_pitcher_stats(player_id):
+    if not player_id:
+        return {"ERA": "-", "WHIP": "-"}
+    try:
+        res = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group=pitching",
+            timeout=15
+        )
+        data = res.json()
+        stats = data["stats"][0]["splits"][0]["stat"]
+        return {"ERA": stats.get("era", "-"), "WHIP": stats.get("whip", "-")}
+    except:
+        return {"ERA": "-", "WHIP": "-"}
+
+
+def fetch_mlb_games():
+    try:
+        res = requests.get(MLB_SCHEDULE_URL, timeout=20)
+        data = res.json()
+    except:
+        return []
+
+    games = []
+    for day in data.get("dates", []):
+        for g in day.get("games", []):
+            try:
+                home = g["teams"]["home"]["team"]["name"]
+                away = g["teams"]["away"]["team"]["name"]
+
+                hp = g["teams"]["home"].get("probablePitcher", {})
+                ap = g["teams"]["away"].get("probablePitcher", {})
+
+                home_pitcher = {"name": hp.get("fullName", "TBD"), **fetch_pitcher_stats(hp.get("id"))}
+                away_pitcher = {"name": ap.get("fullName", "TBD"), **fetch_pitcher_stats(ap.get("id"))}
+
+                games.append({
+                    "home_team": home,
+                    "away_team": away,
+                    "home_pitcher": home_pitcher,
+                    "away_pitcher": away_pitcher
+                })
+            except:
+                continue
+    return games
+
+
+# ===========================================
+# FUNCIONES DE CÁLCULO
+# ===========================================
+
 def pitcher_score(era, whip):
-    """Convierte ERA y WHIP en un score de pitcher"""
     try:
         era = float(era)
         whip = float(whip)
@@ -14,117 +65,76 @@ def pitcher_score(era, whip):
     except:
         return 50
 
-def implied_probability(odds):
-    """Convierte odds tipo decimal a % implícito"""
-    try:
-        return round(100 / odds, 2)
-    except:
-        return 50
 
-def projected_total_runs(home_era, away_era):
-    """Proyección simple de carreras usando ERA"""
+def projected_runs(home_era, away_era):
     try:
         return float(home_era) + float(away_era)
     except:
         return 8.5
 
-def total_confidence(projected_runs, total_line):
-    """Confianza de Total Alta/Baja"""
-    diff = abs(projected_runs - total_line)
-    return min(80, round(55 + diff * 5))
+
+def total_confidence(projection, total_line):
+    diff = abs(projection - total_line)
+    confidence = 55 + diff * 5
+    return min(round(confidence), 80)
+
 
 def runline_confidence(home_prob, away_prob):
     margin = abs(home_prob - away_prob)
-    if margin > 20:
+    if margin >= 20:
         return 70
-    elif margin > 10:
+    elif margin >= 10:
         return 62
-    else:
-        return 55
+    return 55
+
 
 # ===========================================
-# ANALYZER
+# ANALYZER PRINCIPAL
 # ===========================================
 
-def analyze_games(games, odds_data=None):
-    """
-    games = lista de juegos con pitchers y equipos
-    odds_data = dict opcional con moneylines y totales de cada juego
-    """
+def analyze_games(games):
     analyzed = []
     all_picks = []
 
     for g in games:
-
         home = g.get("home_team", "TBD")
         away = g.get("away_team", "TBD")
         home_pitcher = g.get("home_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
         away_pitcher = g.get("away_pitcher", {"name": "TBD", "ERA": "-", "WHIP": "-"})
 
-        # =================================
-        # SCORES DE PITCHERS
-        # =================================
+        # Calcular scores de pitchers
         home_score = pitcher_score(home_pitcher["ERA"], home_pitcher["WHIP"])
         away_score = pitcher_score(away_pitcher["ERA"], away_pitcher["WHIP"])
-        total_score = home_score + away_score
+        score_total = home_score + away_score
 
-        home_prob = round(home_score / total_score * 100)
-        away_prob = round(away_score / total_score * 100)
+        home_prob = round(home_score / score_total * 100)
+        away_prob = round(away_score / score_total * 100)
 
-        # =================================
-        # ODDS (si hay datos del mercado)
-        # =================================
-        if odds_data:
-            game_key = f"{away} vs {home}"
-            ml_home = odds_data.get(game_key, {}).get("ml_home", 2.0)
-            ml_away = odds_data.get(game_key, {}).get("ml_away", 2.0)
-            total_line = odds_data.get(game_key, {}).get("total", 8.5)
-
-            home_prob = round(home_prob * 0.6 + implied_probability(ml_home) * 0.4)
-            away_prob = round(away_prob * 0.6 + implied_probability(ml_away) * 0.4)
-        else:
-            total_line = 8.5
-
-        # =================================
-        # GANADOR
-        # =================================
+        # Determinar ganador
         if home_prob > away_prob:
-            winner = home
-            winner_prob = home_prob
+            winner = {"team": home, "prob": home_prob}
         else:
-            winner = away
-            winner_prob = away_prob
+            winner = {"team": away, "prob": away_prob}
 
-        # =================================
-        # TOTAL ALTA / BAJA
-        # =================================
-        projected_runs = projected_total_runs(home_pitcher["ERA"], away_pitcher["ERA"])
+        # Proyección de Total
+        total_line = 8.5
+        projection = projected_runs(home_pitcher["ERA"], away_pitcher["ERA"])
+        total_type = "ALTA" if projection >= total_line else "BAJA"
+        total = {"line": total_line, "prob": total_confidence(projection, total_line), "type": total_type}
 
-        if projected_runs >= total_line:
-            total_type = "ALTA"
-        else:
-            total_type = "BAJA"
+        # Hándicap
+        handicap = {"line": f"{winner['team']} -1.5", "prob": runline_confidence(home_prob, away_prob)}
 
-        total_prob = total_confidence(projected_runs, total_line)
-
-        # =================================
-        # HÁNDICAP
-        # =================================
-        runline_pick = f"{winner} -1.5"
-        runline_prob = runline_confidence(home_prob, away_prob)
-
-        # =================================
-        # ELEGIR MEJOR PICK
-        # =================================
+        # Determinar mejor pick
         options = [
-            {"type": "Ganador", "pick": winner, "confidence": winner_prob},
-            {"type": f"Total {total_type}", "pick": f"{total_line}", "confidence": total_prob},
-            {"type": "Hándicap", "pick": runline_pick, "confidence": runline_prob}
+            {"type": "Ganador", "value": winner["team"], "confidence": winner["prob"]},
+            {"type": f"Total {total_type}", "value": f"{total_line}", "confidence": total["prob"]},
+            {"type": "Hándicap", "value": handicap["line"], "confidence": handicap["prob"]}
         ]
-
         best_pick = max(options, key=lambda x: x["confidence"])
         confidence = best_pick["confidence"]
 
+        # Nivel
         if confidence >= 75:
             level = "🔥 ELITE"
         elif confidence >= 65:
@@ -134,51 +144,29 @@ def analyze_games(games, odds_data=None):
         else:
             level = "🚫 PASAR"
 
-        # =================================
-        # MENSAJE POR JUEGO
-        # =================================
-        game_message = f"""
-⚾ {away} vs {home}
-
-🧾 Lanzadores
-{away}: {away_pitcher['name']} (ERA {away_pitcher['ERA']} | WHIP {away_pitcher['WHIP']})
-{home}: {home_pitcher['name']} (ERA {home_pitcher['ERA']} | WHIP {home_pitcher['WHIP']})
-
-🎯 Ganador: {winner} ({winner_prob}%)
-⚾ Total: {total_type} {total_line} ({total_prob}%)
-⚾ Hándicap: {runline_pick} ({runline_prob}%)
-
-📊 Confianza: {confidence}%
-🏷 Nivel: {level}
-💎 Jugada: {best_pick['type']} → {best_pick['pick']} ({confidence}%)
-"""
-
+        # Guardar resultado
         analyzed.append({
-            "message": game_message,
-            "top_pick": {
-                "game": f"{away} vs {home}",
-                "type": best_pick["type"],
-                "pick": best_pick["pick"],
-                "confidence": confidence,
-                "level": level
-            }
+            "home_team": home,
+            "away_team": away,
+            "home_pitcher": home_pitcher,
+            "away_pitcher": away_pitcher,
+            "predicted_winner": winner,
+            "predicted_total": total,
+            "predicted_handicap": handicap,
+            "top_pick_type": best_pick["type"],
+            "top_pick_value": best_pick["value"],
+            "top_pick_game": f"{away} vs {home}",
+            "confidence": confidence,
+            "level": level
         })
 
-        all_picks.append(analyzed[-1]["top_pick"])
+        all_picks.append(analyzed[-1])
 
-    # =================================
-    # TOP 5 PICKS DEL DÍA
-    # =================================
+    # Construir TOP 5
     all_picks.sort(key=lambda x: x["confidence"], reverse=True)
     top5 = all_picks[:5]
-
     top_message = "\n🔥 TOP 5 PICKS DEL DÍA\n"
     for i, pick in enumerate(top5, start=1):
-        top_message += f"""
-{i}️⃣ {pick['type']}
-{pick['game']}
-➡️ {pick['pick']} ({pick['confidence']}%)
-{pick['level']}
-"""
+        top_message += f"\n{i}️⃣ {pick['top_pick_type']}\n{pick['top_pick_game']}\n➡️ {pick['top_pick_value']} ({pick['confidence']}%)\n{pick['level']}\n"
 
     return analyzed, top_message
