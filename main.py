@@ -1,44 +1,34 @@
 import os
 import requests
-from analyzer import run as run_analyzer
+from analyzer import run_analyzer
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-def send_telegram(msg):
-    try:
-        requests.post(TELEGRAM_URL, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg,
-            "parse_mode": "Markdown"
-        })
-    except Exception as e:
-        print(f"❌ Error Telegram: {e}")
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode":"Markdown"}
+    requests.post(url, data=payload)
 
 def format_game(game):
-    hp = game["home_pitcher"]
-    ap = game["away_pitcher"]
-    msg = f"""
-⚾ *{game['home_team']} vs {game['away_team']}*
-
-🧾 *Lanzadores*
-{game['home_team']}: {hp['name']} (ERA: {hp['ERA']}, WHIP: {hp['WHIP']})
-{game['away_team']}: {ap['name']} (ERA: {ap['ERA']}, WHIP: {ap['WHIP']})
-
-🎯 *Ganador sugerido:* {game['pick']}
-⚾ *Total carreras:* {game['total']}
-⚾ *Hándicap:* {game['spread']}
-📊 *Confianza:* {game['confidence']}%
-🏷 *Nivel:* {game['level']}
-💎 *Jugada recomendada:* {game['pick']}
-"""
+    msg = f"⚾ {game['home_team']} vs {game['away_team']}\n\n"
+    msg += f"🧾 Lanzadores\n"
+    msg += f"{game['home_team']}: {game['home_pitcher']['name']} (ERA: {game['home_pitcher']['ERA']}, WHIP: {game['home_pitcher']['WHIP']})\n"
+    msg += f"{game['away_team']}: {game['away_pitcher']['name']} (ERA: {game['away_pitcher']['ERA']}, WHIP: {game['away_pitcher']['WHIP']})\n\n"
+    msg += f"🎯 Ganador sugerido: {game['pick']}\n"
+    msg += f"⚾ Total carreras: {game['totals']}\n"
+    msg += f"⚾ Hándicap: {game['handicap']}\n"
+    msg += f"📊 Confianza: {game['confidence']}%\n"
+    msg += f"🏷 Nivel: {game['level']}\n"
+    msg += f"💎 Jugada recomendada: {game['pick']}\n"
     return msg
 
-if __name__ == "__main__":
-    print("📡 MAIN V5.16 START")
+def main():
     games = run_analyzer()
     for g in games:
-        msg = format_game(g)
-        send_telegram(msg)
-    print("✅ Mensajes enviados a Telegram")
+        message = format_game(g)
+        send_telegram(message)
+        print(message + "\n" + "━━━━━━━━━━━━━━\n")
+
+if __name__=="__main__":
+    main()
