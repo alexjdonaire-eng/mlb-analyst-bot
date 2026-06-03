@@ -4,6 +4,7 @@ import requests
 import hashlib
 
 HISTORY_FILE = "market_history.jsonl"
+MEM_FILE = "memory_store.json"
 LAST_HASH_FILE = "last_send.hash"
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -14,129 +15,121 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # TELEGRAM
 # =========================
 def send(msg):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg},
-            timeout=20
-        )
-        print("✅ Telegram sent")
-    except Exception as e:
-        print(f"❌ Telegram error: {e}")
+    requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+        json={"chat_id": CHAT_ID, "text": msg},
+        timeout=20
+    )
 
 
 # =========================
-# LOAD HISTORY
+# MEMORY (PERFORMANCE LEARNING)
+# =========================
+def load_memory():
+    try:
+        with open(MEM_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {
+            "wins": 0,
+            "losses": 0,
+            "prob_bins": {
+                "55-60": {"w": 0, "l": 0},
+                "60-70": {"w": 0, "l": 0}
+            }
+        }
+
+
+def save_memory(mem):
+    with open(MEM_FILE, "w") as f:
+        json.dump(mem, f)
+
+
+# =========================
+# HISTORY
 # =========================
 def load_history():
     rows = []
     try:
         with open(HISTORY_FILE, "r") as f:
             for line in f:
-                try:
-                    rows.append(json.loads(line))
-                except:
-                    continue
+                rows.append(json.loads(line))
     except:
         pass
     return rows
 
 
-# =========================
-# GET LATEST SNAPSHOTS
-# =========================
 def latest_games(history):
     games = {}
-
-    for row in history:
-        key = f"{row.get('away_team')}_{row.get('home_team')}"
-        games.setdefault(key, []).append(row)
-
+    for r in history:
+        key = f"{r.get('away_team')}_{r.get('home_team')}"
+        games.setdefault(key, []).append(r)
     return games
 
 
 # =========================
-# STEAM + CLV ANALYSIS
+# CLV PROXY
 # =========================
-def analyze_steam(game_snapshots):
-    if len(game_snapshots) < 2:
-        return None
+def clv_proxy(snaps):
+    if len(snaps) < 2:
+        return 0
 
-    first = game_snapshots[0]
-    last = game_snapshots[-1]
+    first = snaps[0]["odds"]
+    last = snaps[-1]["odds"]
 
-    odds_first = first.get("odds", {})
-    odds_last = last.get("odds", {})
+    try:
+        f_team = min(first, key=first.get)
+        l_team = min(last, key=last.get)
 
-    if not odds_first or not odds_last:
-        return None
+        if f_team != l_team:
+            return -1  # reverse steam
 
-    # comparar favorito inicial vs final
-    first_fav = min(odds_first, key=odds_first.get)
-    last_fav = min(odds_last, key=odds_last.get)
-
-    steam_direction = "neutral"
-
-    if first_fav == last_fav:
-        steam_direction = "confirmed"
-    else:
-        steam_direction = "reverse"
-
-    # CLV proxy: mejora o empeora precio
-    first_price = odds_first[first_fav]
-    last_price = odds_last.get(first_fav, first_price)
-
-    clv = (first_price - last_price)  # positivo = mejoró
-
-    return {
-        "steam": steam_direction,
-        "clv": clv,
-        "fav": last_fav
-    }
+        return first[f_team] - last.get(f_team, first[f_team])
+    except:
+        return 0
 
 
 # =========================
-# PICK SCORE (SHARP FILTER)
+# EV CALC
 # =========================
-def score_pick(prob, steam_data):
-    score = 0
+def expected_value(prob, odds):
+    decimal_odds = odds
+    return (prob * decimal_odds) - 1
 
-    # base probability
-    if prob >= 62:
-        score += 2
-    elif prob >= 59:
-        score += 1
 
-    # steam logic
-    if steam_data:
-        if steam_data["steam"] == "confirmed":
-            score += 2
-        if steam_data["clv"] > 0:
-            score += 2
-        if steam_data["steam"] == "reverse":
-            score -= 2
+# =========================
+# STAKING (SAFE KELLY)
+# =========================
+def staking(prob, odds):
+    edge = (prob * odds) - 1
 
-    return score
+    if edge <= 0:
+        return 0
+
+    kelly = edge / odds
+
+    # safety cap
+    return round(min(kelly * 0.25, 0.05), 4)  # max 5% bankroll
 
 
 # =========================
 # HASH ANTI-SPAM
 # =========================
-def make_hash(text):
+def hash_report(text):
     return hashlib.md5(text.encode()).hexdigest()
 
 
 def was_sent(report):
     try:
         with open(LAST_HASH_FILE, "r") as f:
-            return f.read().strip() == make_hash(report)
+            return f.read().strip() == hash_report(report)
     except:
         return False
 
 
 def mark_sent(report):
     with open(LAST_HASH_FILE, "w") as f:
-        f.write(make_hash(report))
+        f.write(hash_report(report))
 
 
 # =========================
@@ -146,6 +139,7 @@ def main():
 
     history = load_history()
     games = latest_games(history)
+    mem = load_memory()
 
     picks = []
 
@@ -153,64 +147,72 @@ def main():
 
         snaps = sorted(snaps, key=lambda x: x["time"])
 
-        steam = analyze_steam(snaps)
-
         latest = snaps[-1]
         odds = latest.get("odds", {})
 
         if len(odds) < 2:
             continue
 
-        winner = min(odds, key=odds.get)
-        prob = (1 / odds[winner]) * 100
+        team = min(odds, key=odds.get)
+        price = odds[team]
 
-        score = score_pick(prob, steam)
+        prob = (1 / price)
 
-        # 🔥 SHARP FILTER FINAL
-        if score < 3:
+        ev = expected_value(prob, price)
+        clv = clv_proxy(snaps)
+
+        # FILTER INSTITUCIONAL
+        if prob < 0.58:
+            continue
+        if ev < 0:
             continue
 
+        stake = staking(prob, price)
+
+        score = (prob * 100) + (clv * 10) + (ev * 100)
+
         picks.append({
-            "game": f"{latest.get('away_team')} vs {latest.get('home_team')}",
-            "pick": winner,
-            "prob": round(prob, 2),
-            "steam": steam["steam"] if steam else "none",
-            "clv": round(steam["clv"], 3) if steam else 0,
-            "score": score
+            "game": f"{latest['away_team']} vs {latest['home_team']}",
+            "pick": team,
+            "prob": round(prob * 100, 2),
+            "ev": round(ev, 3),
+            "clv": round(clv, 3),
+            "stake": stake,
+            "score": round(score, 2)
         })
 
-    # ordenar por calidad real
     picks = sorted(picks, key=lambda x: x["score"], reverse=True)
 
     # =========================
     # REPORT
     # =========================
-    report = "🏦 MLB STEAM + SHARP MONEY V8\n\n"
+    report = "🏦 V9 INSTITUTIONAL FUND MODEL\n\n"
 
     for p in picks:
         report += (
             f"⚾ {p['game']}\n"
             f"🎯 Pick: {p['pick']}\n"
             f"📊 Prob: {p['prob']}%\n"
-            f"🧠 Steam: {p['steam']}\n"
-            f"📉 CLV: {p['clv']}\n"
+            f"📉 EV: {p['ev']}\n"
+            f"📈 CLV: {p['clv']}\n"
+            f"💰 Stake: {p['stake'] * 100}% bankroll\n"
             f"⭐ Score: {p['score']}\n"
             f"----------------------\n"
         )
 
     if len(picks) >= 2:
-        report += "\n🔥 PARLEY STEAM\n\n"
+        report += "\n🔥 PORTFOLIO\n\n"
         for p in picks[:4]:
             report += f"✔ {p['pick']} ({p['game']})\n"
 
     if was_sent(report):
-        print("⚠️ DUPLICATE REPORT - SKIPPED")
+        print("SKIP DUPLICATE")
         return
 
     send(report)
     mark_sent(report)
 
-    print("✅ STEAM ANALYZER DONE")
+    print("V9 SENT")
 
 
 if __name__ == "__main__":
