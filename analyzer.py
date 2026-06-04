@@ -109,8 +109,18 @@ def pitcher_score(era, whip):
         return 50
 
 def projected_runs(home_era, away_era):
+
     try:
-        return float(home_era) + float(away_era)
+
+        home_era = float(home_era)
+        away_era = float(away_era)
+
+        avg_era = (home_era + away_era) / 2
+
+        projected = avg_era * 2.2
+
+        return round(projected, 1)
+
     except:
         return 8.5
 
