@@ -5,6 +5,8 @@ from tracker import save_pick, update_pick, load_results
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from datetime import datetime
+from grader import grade_picks
+from openpyxl.formatting.rule import CellIsRule
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -136,14 +138,20 @@ def generate_excel(analyzed_games):
 # MAIN
 # ===========================================
 def main():
+
     print("📡 MIBOTMLB START")
+
+    try:
+        grade_picks()
+    except Exception as e:
+        print(f"Grader error: {e}")
+
     games = fetch_mlb_games()
     if not games:
         send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
         return
 
-    analyzed_games = analyze_games(games)
-
+    analyzed_games, top_message = analyze_games(games)
     # Enviar cada juego
     for g in analyzed_games:
         msg = format_game(g)
