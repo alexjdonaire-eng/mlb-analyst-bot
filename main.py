@@ -58,6 +58,7 @@ def generate_excel(analyzed_games):
     ws = wb.active
     ws.title = "Dashboard"
 
+    today = datetime.now().strftime("%Y-%m-%d")
     # Título y fecha
     ws.merge_cells("A1:F1")
     ws["A1"] = "MIBOTMLB - Dashboard TOP 5"
