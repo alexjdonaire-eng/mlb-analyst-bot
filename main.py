@@ -152,7 +152,8 @@ def main():
         return
 
     analyzed_games, top_message = analyze_games(games)
-    # Enviar cada juego
+
+# Enviar cada juego
 for g in analyzed_games:
     msg = format_game(g)
     send_telegram_message(msg)
