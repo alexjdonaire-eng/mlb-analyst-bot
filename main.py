@@ -156,7 +156,7 @@ def main():
 
     analyzed_games, top_message = analyze_games(games)
 
-    # Enviar cada juego
+        # Enviar cada juego
     for g in analyzed_games:
         msg = format_game(g)
         send_telegram_message(msg)
@@ -164,7 +164,7 @@ def main():
     # Enviar TOP 5
     send_telegram_message(top_message)
 
-    # Guardar picks
+    # Guardar picks TOP 5
     top5 = sorted(
         analyzed_games,
         key=lambda x: x.get("confidence", 0),
@@ -178,12 +178,11 @@ def main():
             pick["top_pick_value"]
         )
 
-    # Excel
+    # Generar Excel
     excel_file = generate_excel(analyzed_games)
 
-    send_telegram_message(
-        "📊 Dashboard diario actualizado"
-    )
+    # Aviso Telegram
+    send_telegram_message("📊 Dashboard diario actualizado")
 
     print(f"Archivo Excel generado: {excel_file}")
 
