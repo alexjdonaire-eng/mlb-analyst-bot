@@ -153,16 +153,26 @@ def main():
 
     analyzed_games, top_message = analyze_games(games)
     # Enviar cada juego
-    for g in analyzed_games:
+for g in analyzed_games:
     msg = format_game(g)
     send_telegram_message(msg)
 
+# Enviar TOP 5
 send_telegram_message(top_message)
 
-    # Guardar picks TOP 5 en tracker
-    top5 = sorted(analyzed_games, key=lambda x: x.get("confidence",0), reverse=True)[:5]
-    for pick in top5:
-        save_pick(pick["top_pick_game"], pick["top_pick_type"], pick["top_pick_value"])
+# Guardar picks TOP 5 en tracker
+top5 = sorted(
+    analyzed_games,
+    key=lambda x: x.get("confidence", 0),
+    reverse=True
+)[:5]
+
+for pick in top5:
+    save_pick(
+        pick["top_pick_game"],
+        pick["top_pick_type"],
+        pick["top_pick_value"]
+    )
 
     # Generar Excel con colores
     excel_file = generate_excel(analyzed_games)
