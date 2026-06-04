@@ -147,16 +147,13 @@ def main():
         print(f"Grader error: {e}")
 
     games = fetch_mlb_games()
-
     if not games:
-        send_telegram_message(
-            "⚠️ No hay juegos hoy o error al obtener datos."
-        )
+        send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
         return
 
     analyzed_games, top_message = analyze_games(games)
 
-        # Enviar cada juego
+    # Enviar cada juego
     for g in analyzed_games:
         msg = format_game(g)
         send_telegram_message(msg)
@@ -185,7 +182,6 @@ def main():
     send_telegram_message("📊 Dashboard diario actualizado")
 
     print(f"Archivo Excel generado: {excel_file}")
-
 
 if __name__ == "__main__":
     main()
