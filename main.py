@@ -147,41 +147,46 @@ def main():
         print(f"Grader error: {e}")
 
     games = fetch_mlb_games()
+
     if not games:
-        send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
+        send_telegram_message(
+            "⚠️ No hay juegos hoy o error al obtener datos."
+        )
         return
 
     analyzed_games, top_message = analyze_games(games)
 
-# Enviar cada juego
-for g in analyzed_games:
-    msg = format_game(g)
-    send_telegram_message(msg)
+    # Enviar cada juego
+    for g in analyzed_games:
+        msg = format_game(g)
+        send_telegram_message(msg)
 
-# Enviar TOP 5
-send_telegram_message(top_message)
+    # Enviar TOP 5
+    send_telegram_message(top_message)
 
-# Guardar picks TOP 5 en tracker
-top5 = sorted(
-    analyzed_games,
-    key=lambda x: x.get("confidence", 0),
-    reverse=True
-)[:5]
+    # Guardar picks
+    top5 = sorted(
+        analyzed_games,
+        key=lambda x: x.get("confidence", 0),
+        reverse=True
+    )[:5]
 
-for pick in top5:
-    save_pick(
-        pick["top_pick_game"],
-        pick["top_pick_type"],
-        pick["top_pick_value"]
-    )
+    for pick in top5:
+        save_pick(
+            pick["top_pick_game"],
+            pick["top_pick_type"],
+            pick["top_pick_value"]
+        )
 
-    # Generar Excel con colores
+    # Excel
     excel_file = generate_excel(analyzed_games)
 
-    # Enviar Excel final al Telegram
-    send_telegram_message(f"📊 Dashboard diario actualizado")
-    # Para enviar archivo real en Telegram necesitarías multipart POST, aquí solo aviso
+    send_telegram_message(
+        "📊 Dashboard diario actualizado"
+    )
+
     print(f"Archivo Excel generado: {excel_file}")
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
