@@ -154,8 +154,10 @@ def main():
     analyzed_games, top_message = analyze_games(games)
     # Enviar cada juego
     for g in analyzed_games:
-        msg = format_game(g)
-        send_telegram_message(msg)
+    msg = format_game(g)
+    send_telegram_message(msg)
+
+send_telegram_message(top_message)
 
     # Guardar picks TOP 5 en tracker
     top5 = sorted(analyzed_games, key=lambda x: x.get("confidence",0), reverse=True)[:5]
