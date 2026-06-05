@@ -1,7 +1,7 @@
 from supabase_client import supabase
 
 # =========================
-# COMPATIBILIDAD CON MAIN.PY
+# CARGAR RESULTADOS
 # =========================
 
 def load_results():
@@ -28,7 +28,9 @@ def load_results():
             "game": item.get("game"),
             "pick_type": item.get("pick_type"),
             "pick_value": item.get("pick_value"),
-            "result": item.get("result", "PENDIENTE")
+            "result": item.get("result", "PENDIENTE"),
+            "confidence": item.get("confidence", 0),
+            "level": item.get("level", "")
         })
 
     return data
@@ -38,7 +40,13 @@ def load_results():
 # GUARDAR PICK
 # =========================
 
-def save_pick(game, pick_type, pick_value, confidence=0, level=""):
+def save_pick(
+    game,
+    pick_type,
+    pick_value,
+    confidence=0,
+    level=""
+):
 
     try:
 
@@ -49,9 +57,10 @@ def save_pick(game, pick_type, pick_value, confidence=0, level=""):
             "pick_type": pick_type,
             "pick_value": pick_value,
             "result": "PENDIENTE",
+            "created_at": datetime.now().strftime("%Y-%m-%d"),
             "confidence": confidence,
             "level": level,
-            "created_at": datetime.now().strftime("%Y-%m-%d")
+            "graded": False
         }).execute()
 
         print("✅ PICK GUARDADO EN SUPABASE")
@@ -61,20 +70,32 @@ def save_pick(game, pick_type, pick_value, confidence=0, level=""):
         print("❌ ERROR SUPABASE")
         print(e)
 
+
 # =========================
 # ACTUALIZAR RESULTADO
 # =========================
 
-def update_pick(game, result):
+def update_pick(
+    game,
+    pick_type,
+    result
+):
 
     try:
 
         supabase.table("picks") \
-            .update({"result": result}) \
+            .update({
+                "result": result,
+                "graded": True
+            }) \
             .eq("game", game) \
+            .eq("pick_type", pick_type) \
             .execute()
 
-        print("✅ RESULTADO ACTUALIZADO")
+        print(
+            f"✅ RESULTADO ACTUALIZADO: "
+            f"{game} | {pick_type} -> {result}"
+        )
 
     except Exception as e:
 
@@ -83,7 +104,7 @@ def update_pick(game, result):
 
 
 # =========================
-# REPORTE DEL DIA
+# REPORTE GENERAL
 # =========================
 
 def daily_report():
@@ -96,6 +117,8 @@ def daily_report():
     report = "📊 RESULTADOS\n\n"
 
     for day in data:
+
+        report += f"📅 {day}\n\n"
 
         for item in data[day]:
 
@@ -111,15 +134,21 @@ def daily_report():
 
             report += (
                 f"{emoji} {item['game']}\n"
-                f"Pick: {item['pick_type']} → {item['pick_value']}\n\n"
+                f"Pick: {item['pick_type']} → {item['pick_value']}\n"
+                f"Confianza: {item.get('confidence', 0)}%\n"
+                f"Nivel: {item.get('level', '')}\n\n"
             )
 
     total = wins + losses
 
-    winrate = round(wins / total * 100, 1) if total else 0
+    winrate = (
+        round(wins / total * 100, 1)
+        if total > 0
+        else 0
+    )
 
     report += (
-        f"\n📈 RECORD\n\n"
+        "\n📈 RECORD GENERAL\n\n"
         f"✅ Ganados: {wins}\n"
         f"❌ Perdidos: {losses}\n"
         f"🎯 Win Rate: {winrate}%"
