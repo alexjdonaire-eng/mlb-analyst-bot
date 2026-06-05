@@ -1,5 +1,37 @@
 from supabase_client import supabase
-from datetime import datetime
+
+# =========================
+# COMPATIBILIDAD CON MAIN.PY
+# =========================
+
+def load_results():
+
+    response = supabase.table("picks").select("*").execute()
+    rows = response.data or []
+
+    data = {}
+
+    for item in rows:
+
+        created = item.get("created_at", "")
+
+        if created:
+            day = created[:10]
+        else:
+            day = "SIN_FECHA"
+
+        if day not in data:
+            data[day] = []
+
+        data[day].append({
+            "game": item.get("game"),
+            "pick_type": item.get("pick_type"),
+            "pick_value": item.get("pick_value"),
+            "result": item.get("result", "PENDIENTE")
+        })
+
+    return data
+
 
 # =========================
 # GUARDAR PICK
@@ -7,14 +39,21 @@ from datetime import datetime
 
 def save_pick(game, pick_type, pick_value):
 
-    supabase.table("picks").insert({
-        "game": game,
-        "pick_type": pick_type,
-        "pick_value": pick_value,
-        "result": "PENDIENTE"
-    }).execute()
+    try:
 
-    print("✅ PICK GUARDADO EN SUPABASE")
+        supabase.table("picks").insert({
+            "game": game,
+            "pick_type": pick_type,
+            "pick_value": pick_value,
+            "result": "PENDIENTE"
+        }).execute()
+
+        print("✅ PICK GUARDADO EN SUPABASE")
+
+    except Exception as e:
+
+        print("❌ ERROR SUPABASE")
+        print(e)
 
 
 # =========================
@@ -23,57 +62,59 @@ def save_pick(game, pick_type, pick_value):
 
 def update_pick(game, result):
 
-    supabase.table("picks") \
-        .update({"result": result}) \
-        .eq("game", game) \
-        .execute()
+    try:
 
-    print("🔄 RESULTADO ACTUALIZADO EN SUPABASE")
+        supabase.table("picks") \
+            .update({"result": result}) \
+            .eq("game", game) \
+            .execute()
+
+        print("✅ RESULTADO ACTUALIZADO")
+
+    except Exception as e:
+
+        print("❌ ERROR UPDATE")
+        print(e)
 
 
 # =========================
-# REPORTE DEL DÍA
+# REPORTE DEL DIA
 # =========================
 
 def daily_report():
 
-    response = supabase.table("picks").select("*").execute()
-    data = response.data
-
-    if not data:
-        return "⚠️ Sin resultados."
+    data = load_results()
 
     wins = 0
     losses = 0
 
-    report = "📊 RESULTADOS DEL DÍA\n\n"
+    report = "📊 RESULTADOS\n\n"
 
-    for item in data:
+    for day in data:
 
-        emoji = "⏳"
+        for item in data[day]:
 
-        if item["result"] == "GANO":
-            emoji = "✅"
-            wins += 1
+            emoji = "⏳"
 
-        elif item["result"] == "PERDIO":
-            emoji = "❌"
-            losses += 1
+            if item["result"] == "GANO":
+                emoji = "✅"
+                wins += 1
 
-        report += (
-            f"{emoji} {item['game']}\n"
-            f"Pick: {item['pick_type']} → {item['pick_value']}\n\n"
-        )
+            elif item["result"] == "PERDIO":
+                emoji = "❌"
+                losses += 1
+
+            report += (
+                f"{emoji} {item['game']}\n"
+                f"Pick: {item['pick_type']} → {item['pick_value']}\n\n"
+            )
 
     total = wins + losses
 
-    winrate = 0
-
-    if total > 0:
-        winrate = round(wins / total * 100, 1)
+    winrate = round(wins / total * 100, 1) if total else 0
 
     report += (
-        f"\n📈 RECORD GENERAL\n\n"
+        f"\n📈 RECORD\n\n"
         f"✅ Ganados: {wins}\n"
         f"❌ Perdidos: {losses}\n"
         f"🎯 Win Rate: {winrate}%"
