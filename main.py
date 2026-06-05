@@ -171,8 +171,11 @@ def main():
         print(f"Grader error: {e}")
 
     games = fetch_mlb_games()
+
     if not games:
-        send_telegram_message("⚠️ No hay juegos hoy o error al obtener datos.")
+        send_telegram_message(
+            "⚠️ No hay juegos hoy o error al obtener datos."
+        )
         return
 
     analyzed_games, top_message = analyze_games(games)
@@ -184,6 +187,37 @@ def main():
 
     # Enviar TOP 5
     send_telegram_message(top_message)
+
+    # Guardar picks TOP 5
+    top5 = sorted(
+        analyzed_games,
+        key=lambda x: x.get("confidence", 0),
+        reverse=True
+    )[:5]
+
+    for pick in top5:
+        save_pick(
+            pick["top_pick_game"],
+            pick["top_pick_type"],
+            pick["top_pick_value"],
+            pick["confidence"],
+            pick["level"]
+        )
+
+    # Generar Excel
+    excel_file = generate_excel(analyzed_games)
+
+    # Subir a Storage
+    upload_dashboard_to_storage(excel_file)
+
+    # Enviar Excel por Telegram
+    send_telegram_file(excel_file)
+
+    # Aviso final
+    send_telegram_message("📊 Dashboard diario actualizado")
+
+    print(f"Archivo Excel generado: {excel_file}")
+
 
 def send_telegram_file(file_path):
 
@@ -225,37 +259,8 @@ def upload_dashboard_to_storage(file_path):
     except Exception as e:
 
         print("❌ ERROR STORAGE")
-        print(e)    
+        print(e)
 
-    # Guardar picks TOP 5
-top5 = sorted(
-    analyzed_games,
-    key=lambda x: x.get("confidence", 0),
-    reverse=True
-)[:5]
-
-for pick in top5:
-    save_pick(
-        pick["top_pick_game"],
-        pick["top_pick_type"],
-        pick["top_pick_value"],
-        pick["confidence"],
-        pick["level"]
-    )
-
-# Generar Excel
-excel_file = generate_excel(analyzed_games)
-
-# Subir a Storage
-upload_dashboard_to_storage(excel_file)
-
-# Enviar Excel por Telegram
-send_telegram_file(excel_file)
-
-# Aviso final
-send_telegram_message("📊 Dashboard diario actualizado")
-
-print(f"Archivo Excel generado: {excel_file}")
 
 if __name__ == "__main__":
     main()
