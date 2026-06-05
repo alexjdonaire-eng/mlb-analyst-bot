@@ -1,12 +1,32 @@
+print("MAIN FILE CARGADO")
+
 import os
 import requests
+
+print("REQUESTS IMPORTADO")
+
 from analyzer import analyze_games, fetch_mlb_games
+
+print("ANALYZER IMPORTADO")
+
 from tracker import save_pick, load_results
+
+print("TRACKER IMPORTADO")
+
 from openpyxl import Workbook
+
+print("OPENPYXL IMPORTADO")
+
 from openpyxl.styles import Font, PatternFill, Alignment
 from datetime import datetime
+
 from grader import grade_picks
+
+print("GRADER IMPORTADO")
+
 from openpyxl.formatting.rule import CellIsRule
+
+print("TODO IMPORTADO")
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
