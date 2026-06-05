@@ -38,7 +38,7 @@ def load_results():
 # GUARDAR PICK
 # =========================
 
-def save_pick(game, pick_type, pick_value):
+def save_pick(game, pick_type, pick_value, confidence=0, level=""):
 
     try:
 
@@ -46,7 +46,9 @@ def save_pick(game, pick_type, pick_value):
             "game": game,
             "pick_type": pick_type,
             "pick_value": pick_value,
-            "result": "PENDIENTE"
+            "result": "PENDIENTE",
+            "confidence": confidence,
+            "level": level
         }).execute()
 
         print("✅ PICK GUARDADO EN SUPABASE")
@@ -55,7 +57,6 @@ def save_pick(game, pick_type, pick_value):
 
         print("❌ ERROR SUPABASE")
         print(e)
-
 
 # =========================
 # ACTUALIZAR RESULTADO
