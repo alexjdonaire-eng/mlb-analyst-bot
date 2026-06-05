@@ -255,7 +255,7 @@ send_telegram_file(excel_file)
 # Aviso final
 send_telegram_message("📊 Dashboard diario actualizado")
 
-print(f"Archivo Excel generado: {excel_file}"))
+print(f"Archivo Excel generado: {excel_file}")
 
 if __name__ == "__main__":
     main()
