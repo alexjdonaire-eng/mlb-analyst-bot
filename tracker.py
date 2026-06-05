@@ -1,35 +1,5 @@
-import json
-import os
+from supabase_client import supabase
 from datetime import datetime
-
-FILE = "/data/daily_results.json"
-
-
-# =========================
-# CARGAR RESULTADOS
-# =========================
-
-def load_results():
-
-    if not os.path.exists(FILE):
-        return {}
-
-    try:
-        with open(FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-
-# =========================
-# GUARDAR RESULTADOS
-# =========================
-
-def save_results(data):
-
-    with open(FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
 
 # =========================
 # GUARDAR PICK
@@ -37,31 +7,14 @@ def save_results(data):
 
 def save_pick(game, pick_type, pick_value):
 
-    data = load_results()
-
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    if today not in data:
-        data[today] = []
-
-    # Evitar duplicados
-    for item in data[today]:
-
-        if (
-            item["game"] == game and
-            item["pick_type"] == pick_type and
-            item["pick_value"] == pick_value
-        ):
-            return
-
-    data[today].append({
+    supabase.table("picks").insert({
         "game": game,
         "pick_type": pick_type,
         "pick_value": pick_value,
         "result": "PENDIENTE"
-    })
+    }).execute()
 
-    save_results(data)
+    print("✅ PICK GUARDADO EN SUPABASE")
 
 
 # =========================
@@ -70,19 +23,12 @@ def save_pick(game, pick_type, pick_value):
 
 def update_pick(game, result):
 
-    data = load_results()
+    supabase.table("picks") \
+        .update({"result": result}) \
+        .eq("game", game) \
+        .execute()
 
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    if today not in data:
-        return
-
-    for item in data[today]:
-
-        if item["game"] == game:
-            item["result"] = result
-
-    save_results(data)
+    print("🔄 RESULTADO ACTUALIZADO EN SUPABASE")
 
 
 # =========================
@@ -91,11 +37,10 @@ def update_pick(game, result):
 
 def daily_report():
 
-    data = load_results()
+    response = supabase.table("picks").select("*").execute()
+    data = response.data
 
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    if today not in data:
+    if not data:
         return "⚠️ Sin resultados."
 
     wins = 0
@@ -103,7 +48,7 @@ def daily_report():
 
     report = "📊 RESULTADOS DEL DÍA\n\n"
 
-    for item in data[today]:
+    for item in data:
 
         emoji = "⏳"
 
@@ -125,13 +70,10 @@ def daily_report():
     winrate = 0
 
     if total > 0:
-        winrate = round(
-            wins / total * 100,
-            1
-        )
+        winrate = round(wins / total * 100, 1)
 
     report += (
-        f"\n📈 RECORD DEL DÍA\n\n"
+        f"\n📈 RECORD GENERAL\n\n"
         f"✅ Ganados: {wins}\n"
         f"❌ Perdidos: {losses}\n"
         f"🎯 Win Rate: {winrate}%"
