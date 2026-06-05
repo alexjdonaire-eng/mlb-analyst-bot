@@ -2,7 +2,7 @@ from datetime import datetime
 from supabase_client import supabase
 
 # ===========================================
-# GUARDAR PICK
+# GUARDAR PICK + HISTORIAL
 # ===========================================
 
 def save_pick(game, pick_type, pick_value, confidence=None, level=None):
@@ -10,42 +10,112 @@ def save_pick(game, pick_type, pick_value, confidence=None, level=None):
     try:
 
         today = datetime.now().strftime("%Y-%m-%d")
+        snapshot_time = datetime.now().strftime("%H:%M")
 
-        # Evitar duplicados del mismo día
+        # Buscar pick activo del juego
         existing = (
             supabase
             .table("picks")
             .select("*")
             .eq("game", game)
-            .eq("pick_type", pick_type)
-            .eq("pick_value", str(pick_value))
             .eq("created_at", today)
             .execute()
         )
 
-        if existing.data:
-            print(f"⚠️ PICK YA EXISTE: {game}")
+        # =====================================
+        # SI NO EXISTE -> CREAR
+        # =====================================
+        if not existing.data:
+
+            history = (
+                supabase
+                .table("pick_history")
+                .insert({
+                    "game": game,
+                    "pick_type": pick_type,
+                    "pick_value": str(pick_value),
+                    "confidence": confidence,
+                    "level": level,
+                    "snapshot_time": snapshot_time,
+                    "created_at": today
+                })
+                .execute()
+            )
+
+            history_id = history.data[0]["id"]
+
+            supabase.table("picks").insert({
+                "game": game,
+                "pick_type": pick_type,
+                "pick_value": str(pick_value),
+                "result": "PENDIENTE",
+                "created_at": today,
+                "confidence": confidence,
+                "level": level,
+                "graded": False,
+                "history_id": history_id
+            }).execute()
+
+            print(f"✅ PICK NUEVO: {game}")
             return
 
-        supabase.table("picks").insert({
-            "game": game,
-            "pick_type": pick_type,
-            "pick_value": str(pick_value),
-            "result": "PENDIENTE",
-            "created_at": today,
-            "confidence": confidence,
-            "level": level,
-            "graded": False
-        }).execute()
+        # =====================================
+        # SI EXISTE -> VERIFICAR CAMBIOS
+        # =====================================
+        current = existing.data[0]
 
-        print("✅ PICK GUARDADO EN SUPABASE")
+        changed = (
+            current.get("pick_type") != pick_type
+            or str(current.get("pick_value")) != str(pick_value)
+            or current.get("confidence") != confidence
+        )
+
+        if not changed:
+            print(f"⚠️ SIN CAMBIOS: {game}")
+            return
+
+        # Guardar snapshot histórico
+        history = (
+            supabase
+            .table("pick_history")
+            .insert({
+                "game": game,
+                "pick_type": pick_type,
+                "pick_value": str(pick_value),
+                "confidence": confidence,
+                "level": level,
+                "snapshot_time": snapshot_time,
+                "created_at": today
+            })
+            .execute()
+        )
+
+        history_id = history.data[0]["id"]
+
+        # Actualizar pick principal
+        (
+            supabase
+            .table("picks")
+            .update({
+                "pick_type": pick_type,
+                "pick_value": str(pick_value),
+                "confidence": confidence,
+                "level": level,
+                "history_id": history_id
+            })
+            .eq("game", game)
+            .eq("created_at", today)
+            .execute()
+        )
+
+        print(f"📈 PICK ACTUALIZADO: {game}")
 
     except Exception as e:
         print("❌ ERROR GUARDANDO PICK")
         print(e)
 
 # ===========================================
-# CARGAR RESULTADOS
+# LOAD RESULTS
 # ===========================================
 
 def load_results():
@@ -81,12 +151,14 @@ def load_results():
         return results
 
     except Exception as e:
+
         print("❌ ERROR LOAD_RESULTS")
         print(e)
+
         return {}
 
 # ===========================================
-# REPORTE DIARIO
+# DAILY REPORT
 # ===========================================
 
 def daily_report():
@@ -118,6 +190,7 @@ def daily_report():
         }
 
     except Exception as e:
+
         print("❌ ERROR DAILY_REPORT")
         print(e)
 
@@ -126,4 +199,4 @@ def daily_report():
             "losses": 0,
             "pending": 0,
             "winrate": 0
-        }
+            }
