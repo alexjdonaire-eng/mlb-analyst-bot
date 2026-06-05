@@ -42,13 +42,16 @@ def save_pick(game, pick_type, pick_value, confidence=0, level=""):
 
     try:
 
+        from datetime import datetime
+
         supabase.table("picks").insert({
             "game": game,
             "pick_type": pick_type,
             "pick_value": pick_value,
             "result": "PENDIENTE",
             "confidence": confidence,
-            "level": level
+            "level": level,
+            "created_at": datetime.now().strftime("%Y-%m-%d")
         }).execute()
 
         print("✅ PICK GUARDADO EN SUPABASE")
