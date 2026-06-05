@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime
 
-FILE = "daily_results.json"
+FILE = "/data/daily_results.json"
 
 
 # =========================
