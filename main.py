@@ -10,6 +10,7 @@ from analyzer import analyze_games, fetch_mlb_games
 print("ANALYZER IMPORTADO")
 
 from tracker import save_pick, load_results
+from supabase_client import supabase
 
 print("TRACKER IMPORTADO")
 
@@ -184,29 +185,77 @@ def main():
     # Enviar TOP 5
     send_telegram_message(top_message)
 
+def send_telegram_file(file_path):
+
+    try:
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+
+        with open(file_path, "rb") as f:
+
+            requests.post(
+                url,
+                data={"chat_id": CHAT_ID},
+                files={"document": f}
+            )
+
+        print("✅ EXCEL ENVIADO A TELEGRAM")
+
+    except Exception as e:
+
+        print("❌ ERROR TELEGRAM FILE")
+        print(e)
+
+
+def upload_dashboard_to_storage(file_path):
+
+    try:
+
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        with open(file_path, "rb") as f:
+
+            supabase.storage.from_("dashboard").upload(
+                f"{today}.xlsx",
+                f.read()
+            )
+
+        print("✅ EXCEL SUBIDO A STORAGE")
+
+    except Exception as e:
+
+        print("❌ ERROR STORAGE")
+        print(e)    
+
     # Guardar picks TOP 5
-    top5 = sorted(
-        analyzed_games,
-        key=lambda x: x.get("confidence", 0),
-        reverse=True
-    )[:5]
+top5 = sorted(
+    analyzed_games,
+    key=lambda x: x.get("confidence", 0),
+    reverse=True
+)[:5]
 
-    for pick in top5:
-        save_pick(
-            pick["top_pick_game"],
-            pick["top_pick_type"],
-            pick["top_pick_value"],
-            pick["confidence"],
-            pick["level"]
-        )
+for pick in top5:
+    save_pick(
+        pick["top_pick_game"],
+        pick["top_pick_type"],
+        pick["top_pick_value"],
+        pick["confidence"],
+        pick["level"]
+    )
 
-    # Generar Excel
-    excel_file = generate_excel(analyzed_games)
+# Generar Excel
+excel_file = generate_excel(analyzed_games)
 
-    # Aviso Telegram
-    send_telegram_message("📊 Dashboard diario actualizado")
+# Subir a Storage
+upload_dashboard_to_storage(excel_file)
 
-    print(f"Archivo Excel generado: {excel_file}")
+# Enviar Excel por Telegram
+send_telegram_file(excel_file)
+
+# Aviso final
+send_telegram_message("📊 Dashboard diario actualizado")
+
+print(f"Archivo Excel generado: {excel_file}"))
 
 if __name__ == "__main__":
     main()
