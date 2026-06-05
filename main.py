@@ -192,11 +192,13 @@ def main():
     )[:5]
 
     for pick in top5:
-        save_pick(
-            pick["top_pick_game"],
-            pick["top_pick_type"],
-            pick["top_pick_value"]
-        )
+    save_pick(
+        pick["top_pick_game"],
+        pick["top_pick_type"],
+        pick["top_pick_value"],
+        pick["confidence"],
+        pick["level"]
+    )
 
     # Generar Excel
     excel_file = generate_excel(analyzed_games)
