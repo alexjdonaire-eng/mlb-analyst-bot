@@ -19,11 +19,17 @@ def grade_picks():
 
         print(f"Picks pendientes: {len(picks)}")
 
-        # Juegos MLB
-        url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+        # FECHA DE PRUEBA
+        url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=2026-06-04"
 
         r = requests.get(url, timeout=20)
+
+        print("STATUS CODE:", r.status_code)
+
         data = r.json()
+
+        print("RESPUESTA MLB:")
+        print(data)
 
         for date in data.get("dates", []):
 
@@ -34,17 +40,16 @@ def grade_picks():
                     .get("detailedState", "")
                 )
 
-                if status != "Final":
-                    continue
+                print("STATUS:", status)
 
                 home_team = game["teams"]["home"]["team"]["name"]
                 away_team = game["teams"]["away"]["team"]["name"]
 
-                home_score = game["teams"]["home"]["score"]
-                away_score = game["teams"]["away"]["score"]
+                home_score = game["teams"]["home"].get("score", 0)
+                away_score = game["teams"]["away"].get("score", 0)
 
                 print(
-                    f"FINAL: {away_team} {away_score} - "
+                    f"{away_team} {away_score} - "
                     f"{home_score} {home_team}"
                 )
 
