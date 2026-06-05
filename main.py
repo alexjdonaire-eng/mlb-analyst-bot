@@ -1,7 +1,7 @@
 import os
 import requests
 from analyzer import analyze_games, fetch_mlb_games
-from tracker import save_pick, update_pick, load_results
+from tracker import save_pick, load_results
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from datetime import datetime
@@ -18,7 +18,10 @@ EXCEL_PATH = "MIBOTMLB_Dashboard_Automatico.xlsx"
 # ===========================================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    data = {
+    "chat_id": CHAT_ID,
+    "text": message
+}
     requests.post(url, data=data)
 
 # ===========================================
@@ -59,7 +62,7 @@ def generate_excel(analyzed_games):
     ws.title = "Dashboard"
 
     today = datetime.now().strftime("%Y-%m-%d")
-
+    results = load_results()
     # Título y fecha
     ws.merge_cells("A1:F1")
     ws["A1"] = "MIBOTMLB - Dashboard TOP 5"
@@ -91,8 +94,6 @@ def generate_excel(analyzed_games):
         ws.cell(i, 2, g['top_pick_type'])
         ws.cell(i, 3, g['top_pick_value'])
         # Cargar resultado desde tracker
-        results = load_results()
-        today = datetime.now().strftime("%Y-%m-%d")
         pick_result = "PENDIENTE"
         if today in results:
             for item in results[today]:
@@ -115,7 +116,7 @@ def generate_excel(analyzed_games):
     ws["A13"] = "Perdidos"
     ws["B13"] = sum(1 for g in top5 if load_results().get(today) and any(item["game"]==g['top_pick_game'] and item["result"]=="PERDIO" for item in load_results()[today]))
     ws["A14"] = "Pendientes"
-    ws["B14"] = 5 - ws["B12"].value - ws["B13"].value
+    ws["B14"] = len(top5) - ws["B12"].value - ws["B13"].value
     ws["A15"] = "Win Rate %"
     total = ws["B12"].value + ws["B13"].value
     ws["B15"] = round(ws["B12"].value / total * 100,1) if total>0 else 0
