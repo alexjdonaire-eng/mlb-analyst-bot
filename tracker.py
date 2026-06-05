@@ -15,10 +15,11 @@ def load_results():
 
         created = item.get("created_at", "")
 
-        if created:
-            day = created[:10]
-        else:
-            day = "SIN_FECHA"
+if created:
+    day = created[:10]
+else:
+    from datetime import datetime
+    day = datetime.now().strftime("%Y-%m-%d")
 
         if day not in data:
             data[day] = []
