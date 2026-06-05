@@ -1,63 +1,38 @@
+from datetime import datetime
 from supabase_client import supabase
 
-# =========================
-# CARGAR RESULTADOS
-# =========================
-
-def load_results():
-
-    response = supabase.table("picks").select("*").execute()
-    rows = response.data or []
-
-    data = {}
-
-    for item in rows:
-
-        created = item.get("created_at", "")
-
-        if created:
-            day = created[:10]
-        else:
-            from datetime import datetime
-            day = datetime.now().strftime("%Y-%m-%d")
-
-        if day not in data:
-            data[day] = []
-
-        data[day].append({
-            "game": item.get("game"),
-            "pick_type": item.get("pick_type"),
-            "pick_value": item.get("pick_value"),
-            "result": item.get("result", "PENDIENTE"),
-            "confidence": item.get("confidence", 0),
-            "level": item.get("level", "")
-        })
-
-    return data
-
-
-# =========================
+# ===========================================
 # GUARDAR PICK
-# =========================
+# ===========================================
 
-def save_pick(
-    game,
-    pick_type,
-    pick_value,
-    confidence=0,
-    level=""
-):
+def save_pick(game, pick_type, pick_value, confidence=None, level=None):
 
     try:
 
-        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Evitar duplicados del mismo día
+        existing = (
+            supabase
+            .table("picks")
+            .select("*")
+            .eq("game", game)
+            .eq("pick_type", pick_type)
+            .eq("pick_value", str(pick_value))
+            .eq("created_at", today)
+            .execute()
+        )
+
+        if existing.data:
+            print(f"⚠️ PICK YA EXISTE: {game}")
+            return
 
         supabase.table("picks").insert({
             "game": game,
             "pick_type": pick_type,
-            "pick_value": pick_value,
+            "pick_value": str(pick_value),
             "result": "PENDIENTE",
-            "created_at": datetime.now().strftime("%Y-%m-%d"),
+            "created_at": today,
             "confidence": confidence,
             "level": level,
             "graded": False
@@ -66,92 +41,89 @@ def save_pick(
         print("✅ PICK GUARDADO EN SUPABASE")
 
     except Exception as e:
-
-        print("❌ ERROR SUPABASE")
+        print("❌ ERROR GUARDANDO PICK")
         print(e)
 
+# ===========================================
+# CARGAR RESULTADOS
+# ===========================================
 
-# =========================
-# ACTUALIZAR RESULTADO
-# =========================
-
-def update_pick(
-    game,
-    pick_type,
-    result
-):
+def load_results():
 
     try:
 
-        supabase.table("picks") \
-            .update({
-                "result": result,
-                "graded": True
-            }) \
-            .eq("game", game) \
-            .eq("pick_type", pick_type) \
+        response = (
+            supabase
+            .table("picks")
+            .select("*")
             .execute()
-
-        print(
-            f"✅ RESULTADO ACTUALIZADO: "
-            f"{game} | {pick_type} -> {result}"
         )
 
+        data = response.data or []
+
+        results = {}
+
+        for row in data:
+
+            date = row.get("created_at")
+
+            if not date:
+                continue
+
+            if date not in results:
+                results[date] = []
+
+            results[date].append({
+                "game": row.get("game"),
+                "result": row.get("result", "PENDIENTE")
+            })
+
+        return results
+
     except Exception as e:
-
-        print("❌ ERROR UPDATE")
+        print("❌ ERROR LOAD_RESULTS")
         print(e)
+        return {}
 
-
-# =========================
-# REPORTE GENERAL
-# =========================
+# ===========================================
+# REPORTE DIARIO
+# ===========================================
 
 def daily_report():
 
-    data = load_results()
+    try:
 
-    wins = 0
-    losses = 0
+        response = (
+            supabase
+            .table("picks")
+            .select("*")
+            .execute()
+        )
 
-    report = "📊 RESULTADOS\n\n"
+        rows = response.data or []
 
-    for day in data:
+        wins = len([r for r in rows if r.get("result") == "GANO"])
+        losses = len([r for r in rows if r.get("result") == "PERDIO"])
+        pending = len([r for r in rows if r.get("result") == "PENDIENTE"])
 
-        report += f"📅 {day}\n\n"
+        total = wins + losses
 
-        for item in data[day]:
+        winrate = round((wins / total) * 100, 1) if total else 0
 
-            emoji = "⏳"
+        return {
+            "wins": wins,
+            "losses": losses,
+            "pending": pending,
+            "winrate": winrate
+        }
 
-            if item["result"] == "GANO":
-                emoji = "✅"
-                wins += 1
+    except Exception as e:
+        print("❌ ERROR DAILY_REPORT")
+        print(e)
 
-            elif item["result"] == "PERDIO":
-                emoji = "❌"
-                losses += 1
-
-            report += (
-                f"{emoji} {item['game']}\n"
-                f"Pick: {item['pick_type']} → {item['pick_value']}\n"
-                f"Confianza: {item.get('confidence', 0)}%\n"
-                f"Nivel: {item.get('level', '')}\n\n"
-            )
-
-    total = wins + losses
-
-    winrate = (
-        round(wins / total * 100, 1)
-        if total > 0
-        else 0
-    )
-
-    report += (
-        "\n📈 RECORD GENERAL\n\n"
-        f"✅ Ganados: {wins}\n"
-        f"❌ Perdidos: {losses}\n"
-        f"🎯 Win Rate: {winrate}%"
-    )
-
-    return report
+        return {
+            "wins": 0,
+            "losses": 0,
+            "pending": 0,
+            "winrate": 0
+        }
