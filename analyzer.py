@@ -58,18 +58,45 @@ def fetch_mlb_games():
 
 def fetch_odds():
     ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-    url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?regions=us&markets=totals,h2h,spreads&apiKey={ODDS_API_KEY}"
+
+    if not ODDS_API_KEY:
+        print("❌ ODDS_API_KEY NO ENCONTRADA")
+        return {}
+
+    url = (
+        "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/"
+        f"?regions=us&markets=totals,h2h,spreads&apiKey={ODDS_API_KEY}"
+    )
+
     try:
         res = requests.get(url, timeout=20)
-        data = res.json()
-    except:
-        data = []
 
-    # Transformar en dict para buscar por juego
+        print("ODDS STATUS:", res.status_code)
+
+        data = res.json()
+
+        if not isinstance(data, list):
+            print("❌ RESPUESTA ODDS INVÁLIDA:")
+            print(data)
+            return {}
+
+    except Exception as e:
+        print("❌ ERROR ODDS:", e)
+        return {}
+
     odds_data = {}
+
     for game in data:
+
+        if not isinstance(game, dict):
+            continue
+
         home = game.get("home_team")
         away = game.get("away_team")
+
+        if not home or not away:
+            continue
+
         key = f"{away} vs {home}"
 
         ml_home = None
@@ -77,24 +104,36 @@ def fetch_odds():
         total = None
 
         for site in game.get("bookmakers", []):
-            markets = site.get("markets", [])
-            for m in markets:
-                if m["key"] == "h2h":
-                    odds = m.get("outcomes", [])
-                    for o in odds:
-                        if o["name"] == home:
-                            ml_home = float(o["price"])
-                        if o["name"] == away:
-                            ml_away = float(o["price"])
-                if m["key"] == "totals":
-                    for o in m.get("outcomes", []):
-                        total = float(o["point"])
+
+            for market in site.get("markets", []):
+
+                if market.get("key") == "h2h":
+
+                    for outcome in market.get("outcomes", []):
+
+                        if outcome.get("name") == home:
+                            ml_home = outcome.get("price")
+
+                        elif outcome.get("name") == away:
+                            ml_away = outcome.get("price")
+
+                elif market.get("key") == "totals":
+
+                    outcomes = market.get("outcomes", [])
+
+                    if outcomes:
+                        total = outcomes[0].get("point")
 
         if ml_home and ml_away and total:
-            odds_data[key] = {"ml_home": ml_home, "ml_away": ml_away, "total": total}
+            odds_data[key] = {
+                "ml_home": float(ml_home),
+                "ml_away": float(ml_away),
+                "total": float(total)
+            }
+
+    print(f"✅ ODDS CARGADAS: {len(odds_data)}")
 
     return odds_data
-
 # ===========================================
 # FUNCIONES DE CÁLCULO
 # ===========================================
